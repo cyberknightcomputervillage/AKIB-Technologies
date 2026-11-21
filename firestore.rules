@@ -1,0 +1,273 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ---------------------------------------------------------
+    // Global Hardened Primitives
+    // ---------------------------------------------------------
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isVerifiedUser() && (
+        request.auth.token.email == 'saikatcomputervillage@gmail.com' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    // ---------------------------------------------------------
+    // Validation Blueprints (Pure static checks, no DB reads)
+    // ---------------------------------------------------------
+    function isValidAdmin(data) {
+      return data.keys().hasAll(['uid', 'email', 'grantedBy', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'email', 'grantedBy', 'createdAt'])
+        && isValidId(data.uid)
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 160
+        && isValidId(data.grantedBy)
+        && data.createdAt is timestamp;
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll([
+          'uid', 'email', 'displayName', 'photoURL', 'phone',
+          'defaultAddress', 'city', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid', 'email', 'displayName', 'photoURL', 'phone',
+          'defaultAddress', 'city', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.uid)
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 160
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 120
+        && data.photoURL is string && data.photoURL.size() <= 1000
+        && data.phone is string && data.phone.size() <= 40
+        && data.defaultAddress is string && data.defaultAddress.size() <= 300
+        && data.city is string && data.city.size() <= 80
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidProduct(data) {
+      return data.keys().hasAll([
+          'title', 'brand', 'category', 'sku', 'price', 'compareAtPrice',
+          'stock', 'soldCount', 'imageUrl', 'summary', 'specs',
+          'featured', 'status', 'lastOrderId', 'createdBy', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'title', 'brand', 'category', 'sku', 'price', 'compareAtPrice',
+          'stock', 'soldCount', 'imageUrl', 'summary', 'specs',
+          'featured', 'status', 'lastOrderId', 'createdBy', 'createdAt', 'updatedAt'
+        ])
+        && data.title is string && data.title.size() >= 2 && data.title.size() <= 160
+        && data.brand is string && data.brand.size() >= 1 && data.brand.size() <= 60
+        && data.category in ['Laptops', 'Processors', 'Graphics Cards', 'Monitors', 'Peripherals', 'Networking', 'Storage']
+        && data.sku is string && data.sku.size() >= 2 && data.sku.size() <= 48 && data.sku.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.price is number && data.price > 0 && data.price <= 10000000
+        && data.compareAtPrice is number && data.compareAtPrice >= 0 && data.compareAtPrice <= 10000000
+        && data.stock is int && data.stock >= 0 && data.stock <= 100000
+        && data.soldCount is int && data.soldCount >= 0 && data.soldCount <= 10000000
+        && data.imageUrl is string && data.imageUrl.size() >= 1 && data.imageUrl.size() <= 1000
+        && data.imageUrl.matches('^(https?://|/src/assets/images/).+$')
+        && data.summary is string && data.summary.size() >= 5 && data.summary.size() <= 800
+        && data.specs is list && data.specs.size() <= 16
+        && (
+          data.specs.size() == 0 || (
+            data.specs[0] is map
+            && data.specs[0].keys().hasAll(['label', 'value'])
+            && data.specs[0].keys().hasOnly(['label', 'value'])
+            && data.specs[0].label is string && data.specs[0].label.size() >= 1 && data.specs[0].label.size() <= 60
+            && data.specs[0].value is string && data.specs[0].value.size() >= 1 && data.specs[0].value.size() <= 120
+          )
+        )
+        && data.featured is bool
+        && data.status in ['active', 'draft']
+        && data.lastOrderId is string && data.lastOrderId.size() >= 1 && data.lastOrderId.size() <= 128
+        && isValidId(data.createdBy)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidOrder(data) {
+      return data.keys().hasAll([
+          'orderNumber', 'userId', 'customerName', 'customerEmail',
+          'customerPhone', 'shippingAddress', 'city', 'paymentMethod',
+          'items', 'subtotal', 'shippingFee', 'totalAmount',
+          'status', 'notes', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'orderNumber', 'userId', 'customerName', 'customerEmail',
+          'customerPhone', 'shippingAddress', 'city', 'paymentMethod',
+          'items', 'subtotal', 'shippingFee', 'totalAmount',
+          'status', 'notes', 'createdAt', 'updatedAt'
+        ])
+        && data.orderNumber is string && data.orderNumber.size() >= 4 && data.orderNumber.size() <= 32 && data.orderNumber.matches('^[a-zA-Z0-9_\\-]+$')
+        && isValidId(data.userId)
+        && data.customerName is string && data.customerName.size() >= 2 && data.customerName.size() <= 120
+        && data.customerEmail is string && data.customerEmail.size() >= 3 && data.customerEmail.size() <= 160
+        && data.customerPhone is string && data.customerPhone.size() >= 5 && data.customerPhone.size() <= 40
+        && data.shippingAddress is string && data.shippingAddress.size() >= 5 && data.shippingAddress.size() <= 300
+        && data.city is string && data.city.size() >= 2 && data.city.size() <= 80
+        && data.paymentMethod in ['cod', 'card_on_delivery', 'bank_transfer']
+        && data.items is list && data.items.size() >= 1 && data.items.size() <= 20
+        && data.items[0] is map
+        && data.items[0].keys().hasAll(['productId', 'title', 'sku', 'price', 'quantity', 'imageUrl'])
+        && data.items[0].keys().hasOnly(['productId', 'title', 'sku', 'price', 'quantity', 'imageUrl'])
+        && data.items[0].productId is string && isValidId(data.items[0].productId)
+        && data.items[0].title is string && data.items[0].title.size() >= 1 && data.items[0].title.size() <= 160
+        && data.items[0].sku is string && data.items[0].sku.size() >= 1 && data.items[0].sku.size() <= 48
+        && data.items[0].price is number && data.items[0].price > 0
+        && data.items[0].quantity is int && data.items[0].quantity >= 1 && data.items[0].quantity <= 50
+        && data.items[0].imageUrl is string && data.items[0].imageUrl.size() <= 1000
+        && data.subtotal is number && data.subtotal > 0
+        && data.shippingFee is number && data.shippingFee >= 0 && data.shippingFee <= 10000
+        && data.totalAmount is number && data.totalAmount == data.subtotal + data.shippingFee
+        && data.status in ['pending', 'processing', 'shipped', 'delivered', 'cancelled']
+        && data.notes is string && data.notes.size() <= 500
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // ---------------------------------------------------------
+    // Collection Rules (Auth -> Static Validation -> Relational)
+    // ---------------------------------------------------------
+    match /test/connection {
+      allow get: if true;
+      allow list, write: if false;
+    }
+
+    match /admins/{adminId} {
+      allow get: if isSignedIn() && isValidId(adminId) && (isOwner(adminId) || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isVerifiedUser() && isValidId(adminId) && isValidAdmin(incoming())
+        && incoming().uid == adminId
+        && incoming().grantedBy == request.auth.uid
+        && incoming().createdAt == request.time
+        && isAdmin();
+      allow update: if false;
+      allow delete: if isVerifiedUser() && isValidId(adminId) && adminId != request.auth.uid && isAdmin();
+    }
+
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isVerifiedUser() && isValidId(userId) && isOwner(userId)
+        && isValidUser(incoming())
+        && incoming().uid == userId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser() && isValidId(userId) && isValidUser(incoming()) && (
+        isAdmin() || (
+          isOwner(userId)
+          && incoming().uid == existing().uid
+          && incoming().email == existing().email
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'displayName', 'photoURL', 'phone', 'defaultAddress', 'city', 'updatedAt'
+          ])
+        )
+      );
+      allow delete: if false;
+    }
+
+    match /products/{productId} {
+      allow get: if isValidId(productId) && (existing().status == 'active' || isAdmin());
+      allow list: if resource.data.status == 'active' || isAdmin();
+      allow create: if isVerifiedUser() && isValidId(productId) && isValidProduct(incoming())
+        && incoming().createdBy == request.auth.uid
+        && incoming().soldCount == 0
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && isAdmin();
+      allow update: if isVerifiedUser() && isValidId(productId) && isValidProduct(incoming()) && (
+        // Tier 1: Admin full catalog & inventory update
+        (
+          isAdmin()
+          && incoming().createdBy == existing().createdBy
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'title', 'brand', 'category', 'sku', 'price', 'compareAtPrice',
+            'stock', 'imageUrl', 'summary', 'specs', 'featured', 'status', 'updatedAt'
+          ])
+        ) ||
+        // Tier 2: Verified Customer atomic stock deduction coupled with Order creation
+        (
+          existing().status == 'active'
+          && incoming().diff(existing()).affectedKeys().hasOnly(['stock', 'soldCount', 'lastOrderId', 'updatedAt'])
+          && incoming().stock < existing().stock
+          && incoming().stock >= 0
+          && incoming().soldCount == existing().soldCount + (existing().stock - incoming().stock)
+          && incoming().updatedAt == request.time
+          && isValidId(incoming().lastOrderId)
+          && existsAfter(/databases/$(database)/documents/orders/$(incoming().lastOrderId))
+          && getAfter(/databases/$(database)/documents/orders/$(incoming().lastOrderId)).data.userId == request.auth.uid
+          && getAfter(/databases/$(database)/documents/orders/$(incoming().lastOrderId)).data.createdAt == request.time
+        )
+      );
+      allow delete: if isVerifiedUser() && isValidId(productId) && isAdmin();
+    }
+
+    match /orders/{orderId} {
+      allow get: if isSignedIn() && isValidId(orderId) && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isVerifiedUser() && isValidId(orderId) && isValidOrder(incoming())
+        && incoming().userId == request.auth.uid
+        && incoming().status == 'pending'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/products/$(incoming().items[0].productId))
+        && get(/databases/$(database)/documents/products/$(incoming().items[0].productId)).data.price == incoming().items[0].price
+        && (incoming().items.size() > 1 || incoming().subtotal == incoming().items[0].price * incoming().items[0].quantity);
+      allow update: if isVerifiedUser() && isValidId(orderId) && isValidOrder(incoming())
+        && incoming().orderNumber == existing().orderNumber
+        && incoming().userId == existing().userId
+        && incoming().items == existing().items
+        && incoming().subtotal == existing().subtotal
+        && incoming().shippingFee == existing().shippingFee
+        && incoming().totalAmount == existing().totalAmount
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          // Tier 1: Admin order lifecycle management (can correct states)
+          (
+            isAdmin()
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'notes', 'updatedAt'])
+          ) ||
+          // Tier 2: Customer may only cancel their own pending order (terminal states locked)
+          (
+            existing().userId == request.auth.uid
+            && existing().status == 'pending'
+            && incoming().status == 'cancelled'
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+          )
+        );
+      allow delete: if false;
+    }
+  }
+}

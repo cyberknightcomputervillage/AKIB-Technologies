@@ -1,0 +1,6 @@
+{
+  "name": "AKIB Technologies",
+  "description": "Precision PC hardware, laptops, graphics cards, monitors, and peripherals storefront with real-time Firebase inventory, secure authentication, and full admin analytics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

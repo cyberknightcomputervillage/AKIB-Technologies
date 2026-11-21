@@ -1,0 +1,297 @@
+{
+  "entities": {
+    "Admin": {
+      "title": "Admin",
+      "description": "Explicitly authorized administrator record keyed by Firebase Auth UID.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 160
+        },
+        "grantedBy": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "email", "grantedBy", "createdAt"]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Private customer profile and default delivery details isolated by owner UID.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 160
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "photoURL": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "phone": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "defaultAddress": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "city": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "email", "displayName", "photoURL", "phone", "defaultAddress", "city", "createdAt", "updatedAt"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Storefront hardware catalog item with real-time stock tracking and external image URL.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 160
+        },
+        "brand": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "category": {
+          "type": "string",
+          "enum": ["Laptops", "Processors", "Graphics Cards", "Monitors", "Peripherals", "Networking", "Storage"]
+        },
+        "sku": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 48,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "price": {
+          "type": "number"
+        },
+        "compareAtPrice": {
+          "type": "number"
+        },
+        "stock": {
+          "type": "integer"
+        },
+        "soldCount": {
+          "type": "integer"
+        },
+        "imageUrl": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000,
+          "pattern": "^(https?://|/src/assets/images/).+$"
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 800
+        },
+        "specs": {
+          "type": "array"
+        },
+        "featured": {
+          "type": "boolean"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["active", "draft"]
+        },
+        "lastOrderId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "createdBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "title",
+        "brand",
+        "category",
+        "sku",
+        "price",
+        "compareAtPrice",
+        "stock",
+        "soldCount",
+        "imageUrl",
+        "summary",
+        "specs",
+        "featured",
+        "status",
+        "lastOrderId",
+        "createdBy",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Customer purchase order atomically linked with inventory deductions.",
+      "type": "object",
+      "properties": {
+        "orderNumber": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 32,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "customerName": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 120
+        },
+        "customerEmail": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 160
+        },
+        "customerPhone": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 40
+        },
+        "shippingAddress": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 300
+        },
+        "city": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "paymentMethod": {
+          "type": "string",
+          "enum": ["cod", "card_on_delivery", "bank_transfer"]
+        },
+        "items": {
+          "type": "array"
+        },
+        "subtotal": {
+          "type": "number"
+        },
+        "shippingFee": {
+          "type": "number"
+        },
+        "totalAmount": {
+          "type": "number"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "processing", "shipped", "delivered", "cancelled"]
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "orderNumber",
+        "userId",
+        "customerName",
+        "customerEmail",
+        "customerPhone",
+        "shippingAddress",
+        "city",
+        "paymentMethod",
+        "items",
+        "subtotal",
+        "shippingFee",
+        "totalAmount",
+        "status",
+        "notes",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/admins/{adminId}": {
+      "schema": {
+        "$ref": "#/entities/Admin"
+      },
+      "description": "Explicit admin UID allowlist documents."
+    },
+    "/users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/UserProfile"
+      },
+      "description": "Private user profiles and shipping metadata."
+    },
+    "/products/{productId}": {
+      "schema": {
+        "$ref": "#/entities/Product"
+      },
+      "description": "E-commerce product catalog with real-time stock quantities."
+    },
+    "/orders/{orderId}": {
+      "schema": {
+        "$ref": "#/entities/Order"
+      },
+      "description": "Customer orders with strict owner/admin read isolation and status lifecycle."
+    }
+  }
+}
