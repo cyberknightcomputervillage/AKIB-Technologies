@@ -4,11 +4,16 @@ import {
   ArrowLeft,
   BarChart3,
   CheckCircle2,
+  Eye,
+  EyeOff,
+  KeyRound,
   Link as LinkIcon,
+  Lock,
   Minus,
   Package,
   Pencil,
   Plus,
+  PlusCircle,
   Search,
   ShoppingCart,
   Trash2,
@@ -47,6 +52,13 @@ const EMPTY_PRODUCT_FORM: ProductInput = {
   status: 'active',
 };
 
+function createFreshPostForm(): ProductInput {
+  return {
+    ...EMPTY_PRODUCT_FORM,
+    sku: `AKB-${Math.random().toString(36).slice(2, 7).toUpperCase()}`,
+  };
+}
+
 export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
   const {
     isAdmin,
@@ -54,19 +66,39 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
     hasFirestoreProducts,
     orders,
     customers,
+    adminCredentialUsername,
     seedStarterCatalog,
     saveProduct,
     adjustProductStock,
     deleteProduct,
     updateOrderStatus,
+    lockAdminPortal,
+    updateAdminCredentials,
   } = useStore();
 
-  const [activeTab, setActiveTab] = useState<AdminTab>('analytics');
+  const [activeTab, setActiveTab] = useState<AdminTab>('post');
   const [productSearch, setProductSearch] = useState('');
   const [orderFilter, setOrderFilter] = useState<OrderStatus | 'all'>('all');
   const [orderSearch, setOrderSearch] = useState('');
 
-  // Product Form Modal / Drawer State
+  // Inline Quick Post Form State ('post' tab)
+  const [postForm, setPostForm] = useState<ProductInput>(createFreshPostForm);
+  const [postError, setPostError] = useState<string | null>(null);
+  const [postSuccess, setPostSuccess] = useState<string | null>(null);
+  const [postingProduct, setPostingProduct] = useState(false);
+
+  // Admin Login & Password Update State ('security' tab)
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newUsername, setNewUsername] = useState(adminCredentialUsername || 'alamgir');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showCurrentPw, setShowCurrentPw] = useState(false);
+  const [showNewPw, setShowNewPw] = useState(false);
+  const [credSaving, setCredSaving] = useState(false);
+  const [credError, setCredError] = useState<string | null>(null);
+  const [credSuccess, setCredSuccess] = useState<string | null>(null);
+
+  // Product Edit Modal / Drawer State ('products' tab)
   const [formOpen, setFormOpen] = useState(false);
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
   const [formState, setFormState] = useState<ProductInput>(EMPTY_PRODUCT_FORM);
@@ -237,14 +269,76 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
     );
   }
 
+  const handlePostSpecChange = (idx: number, key: keyof ProductSpec, value: string) => {
+    setPostForm((prev) => ({
+      ...prev,
+      specs: prev.specs.map((s, i) => (i === idx ? { ...s, [key]: value } : s)),
+    }));
+  };
+
+  const handleAddPostSpecRow = () => {
+    if (postForm.specs.length >= 16) return;
+    setPostForm((prev) => ({
+      ...prev,
+      specs: [...prev.specs, { label: '', value: '' }],
+    }));
+  };
+
+  const handleRemovePostSpecRow = (idx: number) => {
+    setPostForm((prev) => ({
+      ...prev,
+      specs: prev.specs.filter((_, i) => i !== idx),
+    }));
+  };
+
+  const handleInlinePostSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPostError(null);
+    setPostSuccess(null);
+    setPostingProduct(true);
+    try {
+      const cleanedSpecs = postForm.specs.filter(
+        (s) => s.label.trim().length > 0 && s.value.trim().length > 0
+      );
+      await saveProduct({ ...postForm, specs: cleanedSpecs });
+      const publishedTitle = postForm.title.trim();
+      setPostForm(createFreshPostForm());
+      setPostSuccess(`"${publishedTitle}" is now live on AKIB Technologies.`);
+    } catch (err) {
+      setPostError(err instanceof Error ? err.message : 'Unable to publish product.');
+    } finally {
+      setPostingProduct(false);
+    }
+  };
+
+  const handleCredentialsSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setCredError(null);
+    setCredSuccess(null);
+    if (newPassword !== confirmPassword) {
+      setCredError('New password and confirmation do not match.');
+      return;
+    }
+    setCredSaving(true);
+    try {
+      await updateAdminCredentials(currentPassword, newUsername, newPassword);
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      setCredSuccess(
+        `Updated admin credentials. Next login username: "${newUsername.trim()}".`
+      );
+    } catch (err) {
+      setCredError(err instanceof Error ? err.message : 'Unable to update admin credentials.');
+    } finally {
+      setCredSaving(false);
+    }
+  };
+
   const openCreateProduct = () => {
-    setEditingProductId(null);
-    setFormState({
-      ...EMPTY_PRODUCT_FORM,
-      sku: `AKB-${Math.random().toString(36).slice(2, 7).toUpperCase()}`,
-    });
-    setFormError(null);
-    setFormOpen(true);
+    setActiveTab('post');
+    setPostError(null);
+    setPostSuccess(null);
   };
 
   const openEditProduct = (product: Product) => {
@@ -310,10 +404,12 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
   };
 
   const navTabs: { id: AdminTab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
-    { id: 'analytics', label: 'Analytics', icon: BarChart3 },
+    { id: 'post', label: 'Post Product', icon: PlusCircle },
     { id: 'products', label: 'Products', icon: Package },
     { id: 'orders', label: 'Orders', icon: ShoppingCart },
+    { id: 'analytics', label: 'Analytics', icon: BarChart3 },
     { id: 'customers', label: 'Customers', icon: Users },
+    { id: 'security', label: 'Login & Password', icon: KeyRound },
   ];
 
   return (
@@ -349,6 +445,14 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
           >
             <Plus className="w-4 h-4" />
             Post New Product
+          </button>
+          <button
+            type="button"
+            onClick={lockAdminPortal}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded border border-slate-300 bg-white text-slate-700 text-xs sm:text-sm font-medium hover:bg-slate-100 transition-colors cursor-pointer min-h-[42px]"
+          >
+            <Lock className="w-4 h-4" />
+            Lock Panel
           </button>
         </div>
       </div>
@@ -395,6 +499,369 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
 
         {/* Main Viewport */}
         <div className="lg:col-span-9 space-y-6 min-w-0">
+          {/* TAB 0: SIMPLE INLINE POST PRODUCT */}
+          {activeTab === 'post' && (
+            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+              <div className="px-6 py-4 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <h2 className="font-display text-lg font-semibold text-slate-900">
+                    Post a Product to AKIB Technologies
+                  </h2>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Paste any external image link, set your BDT price and stock, and publish directly to the live store.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPostForm(createFreshPostForm());
+                    setPostError(null);
+                    setPostSuccess(null);
+                  }}
+                  className="text-xs font-medium text-slate-500 hover:text-slate-900 underline self-start sm:self-center cursor-pointer"
+                >
+                  Clear Form
+                </button>
+              </div>
+
+              <form onSubmit={handleInlinePostSubmit} className="p-6 space-y-5">
+                {postSuccess && (
+                  <div className="p-3.5 rounded-lg bg-emerald-50 border border-emerald-200 flex items-center justify-between gap-3 text-xs sm:text-sm text-emerald-800">
+                    <span className="flex items-center gap-2 font-medium">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
+                      {postSuccess}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('products')}
+                      className="text-xs font-semibold text-emerald-900 underline shrink-0 cursor-pointer"
+                    >
+                      View Products
+                    </button>
+                  </div>
+                )}
+
+                {postError && (
+                  <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700">
+                    {postError}
+                  </div>
+                )}
+
+                {/* Image Link + Live 4:3 Preview */}
+                <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 items-start p-4 rounded-xl bg-slate-50 border border-slate-200">
+                  <div className="sm:col-span-4 aspect-[4/3] rounded-lg overflow-hidden border border-slate-200 bg-white">
+                    <ProductImage
+                      src={postForm.imageUrl}
+                      alt={postForm.title || 'New product preview'}
+                    />
+                  </div>
+                  <div className="sm:col-span-8 space-y-2">
+                    <label
+                      htmlFor="post-image-url"
+                      className="flex items-center gap-1.5 text-xs font-semibold text-slate-800"
+                    >
+                      <LinkIcon className="w-3.5 h-3.5 text-[#3749BB]" />
+                      Product Image Link (URL)
+                    </label>
+                    <input
+                      id="post-image-url"
+                      type="url"
+                      required
+                      maxLength={1000}
+                      value={postForm.imageUrl}
+                      onChange={(e) =>
+                        setPostForm((prev) => ({ ...prev, imageUrl: e.target.value }))
+                      }
+                      placeholder="https://example.com/images/laptop-or-gpu.jpg"
+                      className="w-full px-3 py-2.5 rounded-lg border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
+                    />
+                    <div className="flex items-center justify-between text-xs text-slate-500">
+                      <span>Paste any direct HTTPS or HTTP image URL.</span>
+                      {postForm.imageUrl && isValidImageUrl(postForm.imageUrl) && (
+                        <span className="inline-flex items-center gap-1 text-emerald-700 font-medium">
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          Valid Link
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="sm:col-span-2">
+                    <label
+                      htmlFor="post-title"
+                      className="block text-xs font-medium text-slate-700 mb-1"
+                    >
+                      Product Title
+                    </label>
+                    <input
+                      id="post-title"
+                      type="text"
+                      required
+                      maxLength={160}
+                      value={postForm.title}
+                      onChange={(e) =>
+                        setPostForm((prev) => ({ ...prev, title: e.target.value }))
+                      }
+                      placeholder="e.g. Lenovo IdeaPad Slim 5 Core i5 13th Gen 16GB RAM"
+                      className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="post-brand"
+                      className="block text-xs font-medium text-slate-700 mb-1"
+                    >
+                      Brand
+                    </label>
+                    <input
+                      id="post-brand"
+                      type="text"
+                      required
+                      maxLength={60}
+                      value={postForm.brand}
+                      onChange={(e) =>
+                        setPostForm((prev) => ({ ...prev, brand: e.target.value }))
+                      }
+                      placeholder="e.g. ASUS, MSI, Lenovo, AMD"
+                      className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="post-category"
+                      className="block text-xs font-medium text-slate-700 mb-1"
+                    >
+                      Category
+                    </label>
+                    <select
+                      id="post-category"
+                      value={postForm.category}
+                      onChange={(e) =>
+                        setPostForm((prev) => ({
+                          ...prev,
+                          category: e.target.value as ProductCategory,
+                        }))
+                      }
+                      className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
+                    >
+                      {PRODUCT_CATEGORIES.map((cat) => (
+                        <option key={cat} value={cat}>
+                          {cat}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="post-price"
+                      className="block text-xs font-medium text-slate-700 mb-1"
+                    >
+                      Special / Cash Price (BDT ৳)
+                    </label>
+                    <input
+                      id="post-price"
+                      type="number"
+                      required
+                      min={1}
+                      step="1"
+                      value={postForm.price || ''}
+                      onChange={(e) =>
+                        setPostForm((prev) => ({
+                          ...prev,
+                          price: Number(e.target.value),
+                        }))
+                      }
+                      placeholder="85000"
+                      className="w-full px-3 py-2.5 rounded-lg border border-slate-200 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="post-compare-price"
+                      className="block text-xs font-medium text-slate-700 mb-1"
+                    >
+                      Regular Price (BDT ৳, Optional)
+                    </label>
+                    <input
+                      id="post-compare-price"
+                      type="number"
+                      min={0}
+                      step="1"
+                      value={postForm.compareAtPrice || ''}
+                      onChange={(e) =>
+                        setPostForm((prev) => ({
+                          ...prev,
+                          compareAtPrice: Number(e.target.value || 0),
+                        }))
+                      }
+                      placeholder="92000"
+                      className="w-full px-3 py-2.5 rounded-lg border border-slate-200 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="post-stock"
+                      className="block text-xs font-medium text-slate-700 mb-1"
+                    >
+                      Stock Quantity
+                    </label>
+                    <input
+                      id="post-stock"
+                      type="number"
+                      required
+                      min={0}
+                      max={100000}
+                      value={postForm.stock}
+                      onChange={(e) =>
+                        setPostForm((prev) => ({
+                          ...prev,
+                          stock: Number(e.target.value),
+                        }))
+                      }
+                      className="w-full px-3 py-2.5 rounded-lg border border-slate-200 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="post-sku"
+                      className="block text-xs font-medium text-slate-700 mb-1"
+                    >
+                      SKU Code
+                    </label>
+                    <input
+                      id="post-sku"
+                      type="text"
+                      required
+                      maxLength={48}
+                      value={postForm.sku}
+                      onChange={(e) =>
+                        setPostForm((prev) => ({ ...prev, sku: e.target.value }))
+                      }
+                      placeholder="AKB-LTP-001"
+                      className="w-full px-3 py-2.5 rounded-lg border border-slate-200 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="post-summary"
+                    className="block text-xs font-medium text-slate-700 mb-1"
+                  >
+                    Short Description & Key Highlights
+                  </label>
+                  <textarea
+                    id="post-summary"
+                    required
+                    rows={3}
+                    maxLength={800}
+                    value={postForm.summary}
+                    onChange={(e) =>
+                      setPostForm((prev) => ({ ...prev, summary: e.target.value }))
+                    }
+                    placeholder="Key features, processor/GPU specs, display, and official Bangladesh warranty details..."
+                    className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
+                  />
+                </div>
+
+                {/* Quick Specs Builder */}
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-semibold text-slate-800">
+                      Key Specifications ({postForm.specs.length}/16)
+                    </label>
+                    <button
+                      type="button"
+                      onClick={handleAddPostSpecRow}
+                      className="text-xs font-semibold text-[#3749BB] hover:underline cursor-pointer"
+                    >
+                      + Add Spec Row
+                    </button>
+                  </div>
+                  <div className="space-y-2">
+                    {postForm.specs.map((spec, idx) => (
+                      <div key={idx} className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          maxLength={60}
+                          value={spec.label}
+                          onChange={(e) => handlePostSpecChange(idx, 'label', e.target.value)}
+                          placeholder="Label (e.g. Processor)"
+                          className="w-1/3 px-3 py-2 rounded-lg border border-slate-200 text-xs focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
+                        />
+                        <input
+                          type="text"
+                          maxLength={120}
+                          value={spec.value}
+                          onChange={(e) => handlePostSpecChange(idx, 'value', e.target.value)}
+                          placeholder="Value (e.g. Intel Core i5-13420H)"
+                          className="flex-1 px-3 py-2 rounded-lg border border-slate-200 text-xs focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleRemovePostSpecRow(idx)}
+                          aria-label="Remove spec row"
+                          className="p-2 text-slate-400 hover:text-red-600 cursor-pointer"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-4 pt-3 border-t border-slate-200">
+                  <label className="inline-flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={postForm.featured}
+                      onChange={(e) =>
+                        setPostForm((prev) => ({ ...prev, featured: e.target.checked }))
+                      }
+                      className="rounded border-slate-300 text-[#3749BB] focus:ring-[#3749BB]"
+                    />
+                    <span>Show in Featured Products</span>
+                  </label>
+
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-slate-500">Status:</span>
+                    <select
+                      value={postForm.status}
+                      onChange={(e) =>
+                        setPostForm((prev) => ({
+                          ...prev,
+                          status: e.target.value as 'active' | 'draft',
+                        }))
+                      }
+                      className="px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-medium bg-white"
+                    >
+                      <option value="active">Active (Live on Storefront)</option>
+                      <option value="draft">Draft (Hidden)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="flex justify-end pt-2">
+                  <button
+                    type="submit"
+                    disabled={postingProduct}
+                    className="px-6 py-3 rounded bg-[#EF4A23] text-white text-sm font-semibold hover:bg-[#D93E18] disabled:opacity-50 transition-colors cursor-pointer min-h-[44px]"
+                  >
+                    {postingProduct ? 'Publishing...' : 'Publish Product'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
+
           {/* TAB 1: ANALYTICS */}
           {activeTab === 'analytics' && (
             <div className="space-y-6">
@@ -951,6 +1418,165 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
                   </table>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* TAB 5: ADMIN USERNAME & PASSWORD SETTINGS */}
+          {activeTab === 'security' && (
+            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden max-w-2xl">
+              <div className="px-6 py-4 border-b border-slate-200">
+                <h2 className="font-display text-lg font-semibold text-slate-900">
+                  Admin Login & Password
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Change the username and password required to unlock{' '}
+                  <span className="font-mono text-slate-700">/admin</span>. Credentials are stored hashed in your admin-only database record.
+                </p>
+              </div>
+
+              <form onSubmit={handleCredentialsSubmit} className="p-6 space-y-4">
+                <div className="p-3.5 rounded-lg bg-slate-50 border border-slate-200 flex items-center justify-between text-xs">
+                  <span className="text-slate-600 font-medium">Current Admin Username</span>
+                  <span className="font-mono font-semibold text-slate-900">
+                    {adminCredentialUsername}
+                  </span>
+                </div>
+
+                {credSuccess && (
+                  <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
+                    <span>{credSuccess}</span>
+                  </div>
+                )}
+
+                {credError && (
+                  <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700">
+                    {credError}
+                  </div>
+                )}
+
+                <div>
+                  <label
+                    htmlFor="sec-current-pw"
+                    className="block text-xs font-semibold text-slate-700 mb-1"
+                  >
+                    Current Password
+                  </label>
+                  <div className="relative">
+                    <input
+                      id="sec-current-pw"
+                      type={showCurrentPw ? 'text' : 'password'}
+                      required
+                      autoComplete="current-password"
+                      value={currentPassword}
+                      onChange={(e) => setCurrentPassword(e.target.value)}
+                      placeholder="Enter your current admin password"
+                      className="w-full pl-3.5 pr-10 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowCurrentPw((v) => !v)}
+                      aria-label={showCurrentPw ? 'Hide current password' : 'Show current password'}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-700 cursor-pointer"
+                    >
+                      {showCurrentPw ? (
+                        <EyeOff className="w-4 h-4" />
+                      ) : (
+                        <Eye className="w-4 h-4" />
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="sec-new-username"
+                    className="block text-xs font-semibold text-slate-700 mb-1"
+                  >
+                    New Admin Username
+                  </label>
+                  <input
+                    id="sec-new-username"
+                    type="text"
+                    required
+                    minLength={3}
+                    maxLength={60}
+                    autoComplete="username"
+                    value={newUsername}
+                    onChange={(e) => setNewUsername(e.target.value)}
+                    placeholder="Enter new username (min 3 characters)"
+                    className="w-full px-3.5 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label
+                      htmlFor="sec-new-pw"
+                      className="block text-xs font-semibold text-slate-700 mb-1"
+                    >
+                      New Password
+                    </label>
+                    <div className="relative">
+                      <input
+                        id="sec-new-pw"
+                        type={showNewPw ? 'text' : 'password'}
+                        required
+                        minLength={4}
+                        maxLength={100}
+                        autoComplete="new-password"
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        placeholder="Min 4 characters"
+                        className="w-full pl-3.5 pr-10 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowNewPw((v) => !v)}
+                        aria-label={showNewPw ? 'Hide new password' : 'Show new password'}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-700 cursor-pointer"
+                      >
+                        {showNewPw ? (
+                          <EyeOff className="w-4 h-4" />
+                        ) : (
+                          <Eye className="w-4 h-4" />
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="sec-confirm-pw"
+                      className="block text-xs font-semibold text-slate-700 mb-1"
+                    >
+                      Confirm New Password
+                    </label>
+                    <input
+                      id="sec-confirm-pw"
+                      type={showNewPw ? 'text' : 'password'}
+                      required
+                      minLength={4}
+                      maxLength={100}
+                      autoComplete="new-password"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      placeholder="Re-enter new password"
+                      className="w-full px-3.5 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex justify-end pt-2">
+                  <button
+                    type="submit"
+                    disabled={credSaving}
+                    className="px-6 py-2.5 rounded bg-[#3749BB] text-white text-sm font-semibold hover:bg-[#2A3998] disabled:opacity-50 transition-colors cursor-pointer min-h-[44px]"
+                  >
+                    {credSaving ? 'Updating...' : 'Save New Credentials'}
+                  </button>
+                </div>
+              </form>
             </div>
           )}
         </div>

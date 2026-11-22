@@ -152,6 +152,17 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidAdminCredential(data) {
+      return data.keys().hasAll(['username', 'passwordHash', 'salt', 'iterations', 'updatedBy', 'updatedAt'])
+        && data.keys().hasOnly(['username', 'passwordHash', 'salt', 'iterations', 'updatedBy', 'updatedAt'])
+        && data.username is string && data.username.size() >= 3 && data.username.size() <= 60
+        && data.passwordHash is string && data.passwordHash.size() == 64 && data.passwordHash.matches('^[a-f0-9]+$')
+        && data.salt is string && data.salt.size() >= 16 && data.salt.size() <= 64
+        && data.iterations is int && data.iterations >= 100000 && data.iterations <= 500000
+        && isValidId(data.updatedBy)
+        && data.updatedAt is timestamp;
+    }
+
     // ---------------------------------------------------------
     // Collection Rules (Auth -> Static Validation -> Relational)
     // ---------------------------------------------------------
@@ -170,6 +181,17 @@ service cloud.firestore {
         && isAdmin();
       allow update: if false;
       allow delete: if isVerifiedUser() && isValidId(adminId) && adminId != request.auth.uid && isAdmin();
+    }
+
+    match /adminConfig/{configId} {
+      allow get: if isVerifiedUser() && isValidId(configId) && configId == 'credentials' && isAdmin();
+      allow list: if false;
+      allow create, update: if isVerifiedUser() && isValidId(configId) && configId == 'credentials'
+        && isValidAdminCredential(incoming())
+        && incoming().updatedBy == request.auth.uid
+        && incoming().updatedAt == request.time
+        && isAdmin();
+      allow delete: if false;
     }
 
     match /users/{userId} {

@@ -26,7 +26,6 @@ interface StorefrontProps {
   onSelectCategory: (cat: ProductCategory | 'All') => void;
   onSelectProduct: (product: Product) => void;
   onNavigateOrders: () => void;
-  onNavigateAdmin: () => void;
 }
 
 type SortOption = 'featured' | 'price_asc' | 'price_desc' | 'in_stock';
@@ -46,15 +45,12 @@ export function Storefront({
   onSelectCategory,
   onSelectProduct,
   onNavigateOrders,
-  onNavigateAdmin,
 }: StorefrontProps) {
   const {
     products,
     productsLoading,
     hasFirestoreProducts,
-    isAdmin,
     addToCart,
-    seedStarterCatalog,
   } = useStore();
 
   const [searchQuery, setSearchQuery] = useState(() => {
@@ -172,10 +168,10 @@ export function Storefront({
                 </button>
                 <button
                   type="button"
-                  onClick={isAdmin ? onNavigateAdmin : onNavigateOrders}
+                  onClick={onNavigateOrders}
                   className="inline-flex items-center gap-2 px-4 py-2.5 rounded bg-white/10 backdrop-blur-xs border border-white/25 text-white text-sm font-medium hover:bg-white/20 transition-colors cursor-pointer min-h-[44px]"
                 >
-                  {isAdmin ? 'Admin Console' : 'Track My Order'}
+                  Track My Order
                 </button>
               </div>
             </div>
@@ -295,29 +291,16 @@ export function Storefront({
       {/* 3. Featured Products Grid (StarTech 4-Column Card Layout) */}
       <section id="catalog-section" className="max-w-[1280px] mx-auto px-4 sm:px-6 lg:px-8 pb-14">
         {!hasFirestoreProducts && !productsLoading && (
-          <div className="mb-6 p-4 rounded-lg border border-slate-200 bg-white flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="flex items-start gap-3">
-              <Sparkles className="w-5 h-5 text-[#EF4A23] shrink-0 mt-0.5" />
-              <div>
-                <p className="text-sm font-semibold text-slate-900">
-                  Showcase Catalog Preview (BDT)
-                </p>
-                <p className="text-xs text-slate-600 mt-0.5">
-                  {isAdmin
-                    ? 'Publish these BDT starter products to your live Firestore database or post custom items in the Admin Console.'
-                    : 'Waiting for store administrator to publish live inventory into Firestore.'}
-                </p>
-              </div>
+          <div className="mb-6 p-4 rounded-lg border border-slate-200 bg-white flex items-start gap-3">
+            <Sparkles className="w-5 h-5 text-[#EF4A23] shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-semibold text-slate-900">
+                Showcase Catalog Preview (BDT)
+              </p>
+              <p className="text-xs text-slate-600 mt-0.5">
+                Previewing flagship hardware listings. Live stock checkout activates once inventory is published.
+              </p>
             </div>
-            {isAdmin && (
-              <button
-                type="button"
-                onClick={() => void seedStarterCatalog()}
-                className="px-4 py-2 rounded bg-[#3749BB] text-white text-xs font-semibold hover:bg-[#2D3D9E] transition-colors whitespace-nowrap shrink-0 cursor-pointer min-h-[40px]"
-              >
-                Publish BDT Catalog
-              </button>
-            )}
           </div>
         )}
 
@@ -594,15 +577,6 @@ export function Storefront({
               </button>
               <span className="text-slate-400">0% EMI Policy (Up to 12 Months)</span>
               <span className="text-slate-400">Official Brand Warranty Claim</span>
-              {isAdmin && (
-                <button
-                  type="button"
-                  onClick={onNavigateAdmin}
-                  className="text-[#EF4A23] font-semibold hover:underline cursor-pointer"
-                >
-                  Open Admin Console
-                </button>
-              )}
             </div>
           </div>
         </div>

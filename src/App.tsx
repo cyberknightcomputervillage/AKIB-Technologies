@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import { AdminConsole } from './components/AdminConsole';
+import { AdminLoginGate } from './components/AdminLoginGate';
 import { CartDrawer } from './components/CartDrawer';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Header } from './components/Header';
@@ -11,12 +12,39 @@ import { Storefront } from './components/Storefront';
 import { StoreProvider, useStore } from './context/StoreContext';
 import type { AppView, Product, ProductCategory } from './types';
 
+function resolveViewFromPath(pathname: string): AppView {
+  const clean = pathname.replace(/\/+$/, '').toLowerCase();
+  if (clean === '/admin') return 'admin';
+  if (clean === '/orders') return 'orders';
+  return 'store';
+}
+
 function AppShell() {
-  const { products, toast, clearToast } = useStore();
-  const [activeView, setActiveView] = useState<AppView>('store');
+  const { products, isAdmin, adminUnlocked, toast, clearToast } = useStore();
+  const [activeView, setActiveView] = useState<AppView>(() =>
+    resolveViewFromPath(window.location.pathname)
+  );
   const [selectedCategory, setSelectedCategory] = useState<ProductCategory | 'All'>('All');
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [cartOpen, setCartOpen] = useState(false);
+
+  // Synchronize SPA navigation with browser URL & history (Back/Forward)
+  useEffect(() => {
+    const handlePopState = () => {
+      setActiveView(resolveViewFromPath(window.location.pathname));
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  const navigateTo = useCallback((view: AppView) => {
+    // Public UI only navigates between '/' and '/orders'. '/admin' is reached via direct URL.
+    const nextPath = view === 'orders' ? '/orders' : '/';
+    if (window.location.pathname !== nextPath) {
+      window.history.pushState({}, '', nextPath);
+    }
+    setActiveView(view === 'admin' ? 'store' : view);
+  }, []);
 
   return (
     <div className="min-h-screen bg-[#F2F4F8] text-slate-900 flex flex-col">
@@ -28,7 +56,7 @@ function AppShell() {
 
       <Header
         activeView={activeView}
-        onNavigateView={setActiveView}
+        onNavigateView={navigateTo}
         onSelectCategory={setSelectedCategory}
         onOpenCart={() => setCartOpen(true)}
       />
@@ -39,18 +67,20 @@ function AppShell() {
             selectedCategory={selectedCategory}
             onSelectCategory={setSelectedCategory}
             onSelectProduct={setSelectedProduct}
-            onNavigateOrders={() => setActiveView('orders')}
-            onNavigateAdmin={() => setActiveView('admin')}
+            onNavigateOrders={() => navigateTo('orders')}
           />
         )}
 
         {activeView === 'orders' && (
-          <OrdersView onBackToStore={() => setActiveView('store')} />
+          <OrdersView onBackToStore={() => navigateTo('store')} />
         )}
 
-        {activeView === 'admin' && (
-          <AdminConsole onBackToStore={() => setActiveView('store')} />
-        )}
+        {activeView === 'admin' &&
+          (isAdmin && adminUnlocked ? (
+            <AdminConsole onBackToStore={() => navigateTo('store')} />
+          ) : (
+            <AdminLoginGate onBackToStore={() => navigateTo('store')} />
+          ))}
       </div>
 
       <ProductDetailModal
@@ -62,7 +92,7 @@ function AppShell() {
       <CartDrawer
         open={cartOpen}
         onClose={() => setCartOpen(false)}
-        onViewOrders={() => setActiveView('orders')}
+        onViewOrders={() => navigateTo('orders')}
       />
 
       {toast && (

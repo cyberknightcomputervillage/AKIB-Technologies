@@ -266,6 +266,42 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "AdminCredential": {
+      "title": "AdminCredential",
+      "description": "Salted PBKDF2-SHA256 admin portal username and password hash stored exclusively for verified admins.",
+      "type": "object",
+      "properties": {
+        "username": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 60
+        },
+        "passwordHash": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[a-f0-9]+$"
+        },
+        "salt": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 64
+        },
+        "iterations": {
+          "type": "integer"
+        },
+        "updatedBy": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["username", "passwordHash", "salt", "iterations", "updatedBy", "updatedAt"]
     }
   },
   "firestore": {
@@ -274,6 +310,12 @@
         "$ref": "#/entities/Admin"
       },
       "description": "Explicit admin UID allowlist documents."
+    },
+    "/adminConfig/{configId}": {
+      "schema": {
+        "$ref": "#/entities/AdminCredential"
+      },
+      "description": "Protected admin portal login hash and changeable username."
     },
     "/users/{userId}": {
       "schema": {

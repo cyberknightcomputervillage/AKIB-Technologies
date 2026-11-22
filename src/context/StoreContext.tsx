@@ -40,6 +40,12 @@ import {
 } from '../lib/firebase';
 import { STARTER_PRODUCTS } from '../lib/starterCatalog';
 import {
+  createCredentialPayload,
+  verifyInitialCredentials,
+  verifyStoredCredentials,
+  type StoredAdminCredential,
+} from '../lib/adminAuth';
+import {
   calculateShippingBDT,
   isValidDocumentId,
   sanitizeSku,
@@ -99,6 +105,15 @@ interface StoreContextValue {
   adjustProductStock: (productId: string, newStock: number) => Promise<void>;
   deleteProduct: (productId: string) => Promise<void>;
   updateOrderStatus: (orderId: string, status: OrderStatus, notes?: string) => Promise<void>;
+  adminUnlocked: boolean;
+  adminCredentialUsername: string;
+  unlockAdminPortal: (username: string, password: string) => Promise<void>;
+  lockAdminPortal: () => void;
+  updateAdminCredentials: (
+    currentPassword: string,
+    newUsername: string,
+    newPassword: string
+  ) => Promise<void>;
 }
 
 const StoreContext = createContext<StoreContextValue | undefined>(undefined);
@@ -110,6 +125,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [isAdminDoc, setIsAdminDoc] = useState(false);
+  const [adminUnlocked, setAdminUnlocked] = useState(false);
+  const [adminCredentialUsername, setAdminCredentialUsername] = useState('');
 
   const [firestoreProducts, setFirestoreProducts] = useState<Product[]>([]);
   const [productsLoading, setProductsLoading] = useState(true);
@@ -172,6 +189,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setUser(firebaseUser);
       setIsAdminDoc(false);
       setUserProfile(null);
+      if (!firebaseUser) {
+        setAdminUnlocked(false);
+        setAdminCredentialUsername('');
+      }
 
       if (firebaseUser) {
         try {
@@ -433,6 +454,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(async () => {
     try {
       await signOut(auth);
+      setAdminUnlocked(false);
       showToast('Signed out.', 'info');
     } catch (error) {
       const msg = error instanceof Error ? error.message : 'Sign-out failed.';
@@ -806,6 +828,105 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [user, isAdmin, showToast]
   );
 
+  const unlockAdminPortal = useCallback(
+    async (username: string, password: string) => {
+      if (!user || !isAdmin) {
+        throw new Error('Please sign in with the authorized Google Admin account first.');
+      }
+      const credRef = doc(db, 'adminConfig', 'credentials');
+      let snap;
+      try {
+        snap = await getDoc(credRef);
+      } catch (err) {
+        handleFirestoreError(err, OperationType.GET, 'adminConfig/credentials');
+      }
+
+      if (snap.exists()) {
+        const stored = snap.data() as StoredAdminCredential;
+        const ok = await verifyStoredCredentials(username, password, stored);
+        if (!ok) {
+          throw new Error('Invalid admin username or password.');
+        }
+        setAdminCredentialUsername(stored.username);
+        setAdminUnlocked(true);
+        showToast('Admin panel unlocked.', 'success');
+      } else {
+        const ok = await verifyInitialCredentials(username, password);
+        if (!ok) {
+          throw new Error('Invalid admin username or password.');
+        }
+        const payload = await createCredentialPayload(username.trim(), password);
+        try {
+          await setDoc(credRef, {
+            ...payload,
+            updatedBy: user.uid,
+            updatedAt: serverTimestamp(),
+          });
+        } catch (err) {
+          handleFirestoreError(err, OperationType.CREATE, 'adminConfig/credentials');
+        }
+        setAdminCredentialUsername(payload.username);
+        setAdminUnlocked(true);
+        showToast('Admin panel unlocked.', 'success');
+      }
+    },
+    [user, isAdmin, showToast]
+  );
+
+  const lockAdminPortal = useCallback(() => {
+    setAdminUnlocked(false);
+    showToast('Admin panel locked.', 'info');
+  }, [showToast]);
+
+  const updateAdminCredentials = useCallback(
+    async (currentPassword: string, newUsername: string, newPassword: string) => {
+      if (!user || !isAdmin || !adminUnlocked) {
+        throw new Error('Admin session is locked.');
+      }
+      const cleanUser = newUsername.trim();
+      if (cleanUser.length < 3 || cleanUser.length > 60) {
+        throw new Error('Username must be between 3 and 60 characters.');
+      }
+      if (newPassword.length < 4 || newPassword.length > 100) {
+        throw new Error('Password must be between 4 and 100 characters.');
+      }
+
+      const credRef = doc(db, 'adminConfig', 'credentials');
+      let snap;
+      try {
+        snap = await getDoc(credRef);
+      } catch (err) {
+        handleFirestoreError(err, OperationType.GET, 'adminConfig/credentials');
+      }
+
+      if (snap.exists()) {
+        const stored = snap.data() as StoredAdminCredential;
+        const validCurrent = await verifyStoredCredentials(
+          stored.username,
+          currentPassword,
+          stored
+        );
+        if (!validCurrent) {
+          throw new Error('Current password is incorrect.');
+        }
+      }
+
+      const payload = await createCredentialPayload(cleanUser, newPassword);
+      try {
+        await setDoc(credRef, {
+          ...payload,
+          updatedBy: user.uid,
+          updatedAt: serverTimestamp(),
+        });
+        setAdminCredentialUsername(payload.username);
+        showToast('Admin username and password updated.', 'success');
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, 'adminConfig/credentials');
+      }
+    },
+    [user, isAdmin, adminUnlocked, showToast]
+  );
+
   const value: StoreContextValue = {
     user,
     userProfile,
@@ -837,6 +958,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     adjustProductStock,
     deleteProduct,
     updateOrderStatus,
+    adminUnlocked,
+    adminCredentialUsername,
+    unlockAdminPortal,
+    lockAdminPortal,
+    updateAdminCredentials,
   };
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;

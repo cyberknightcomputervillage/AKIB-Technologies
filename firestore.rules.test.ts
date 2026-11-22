@@ -107,6 +107,7 @@ if (fs.existsSync(rulesPath)) {
     'isValidUser(data)',
     'isValidProduct(data)',
     'isValidOrder(data)',
+    'isValidAdminCredential(data)',
     'existsAfter(/databases/$(database)/documents/orders/$(incoming().lastOrderId))',
     'request.auth.token.email_verified == true',
     "^(https?://|/src/assets/images/).+$",

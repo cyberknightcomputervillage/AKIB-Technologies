@@ -92,4 +92,4 @@ export interface CartItem {
 }
 
 export type AppView = 'store' | 'orders' | 'admin';
-export type AdminTab = 'analytics' | 'products' | 'orders' | 'customers';
+export type AdminTab = 'post' | 'products' | 'orders' | 'analytics' | 'customers' | 'security';

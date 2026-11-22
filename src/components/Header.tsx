@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { LogOut, Menu, ShoppingBag, ShieldCheck, User as UserIcon, X } from 'lucide-react';
+import { LogOut, Menu, ShoppingBag, User as UserIcon, X } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 import type { AppView, ProductCategory } from '../types';
 
@@ -16,7 +16,7 @@ export function Header({
   onSelectCategory,
   onOpenCart,
 }: HeaderProps) {
-  const { user, isAdmin, cartCount, signInWithGoogle, logout } = useStore();
+  const { user, cartCount, signInWithGoogle, logout } = useStore();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const handleCategoryClick = (category: ProductCategory | 'All') => {
@@ -40,7 +40,7 @@ export function Header({
       <div className="max-w-[1280px] mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-8">
         {/* Zone 1: Single-element Brand Wordmark */}
         <a
-          href="#top"
+          href="/"
           onClick={(e) => {
             e.preventDefault();
             onSelectCategory('All');
@@ -51,7 +51,7 @@ export function Header({
           AKIB Technologies
         </a>
 
-        {/* Zone 2: 5 concise single-line navigation links */}
+        {/* Zone 2: 5 concise single-line navigation links (No admin button anywhere) */}
         <nav className="hidden md:flex items-center gap-6 text-sm font-medium text-slate-300">
           <button
             type="button"
@@ -85,31 +85,17 @@ export function Header({
           >
             Monitor
           </button>
-          {isAdmin ? (
-            <button
-              type="button"
-              onClick={() => handleViewClick('admin')}
-              className={`whitespace-nowrap shrink-0 transition-colors hover:text-white cursor-pointer ${
-                activeView === 'admin'
-                  ? 'text-[#EF4A23] underline underline-offset-8 decoration-[#EF4A23] decoration-2'
-                  : 'text-slate-200'
-              }`}
-            >
-              Admin
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => handleViewClick('orders')}
-              className={`whitespace-nowrap shrink-0 transition-colors hover:text-white cursor-pointer ${
-                activeView === 'orders'
-                  ? 'text-white underline underline-offset-8 decoration-[#EF4A23] decoration-2'
-                  : ''
-              }`}
-            >
-              My Orders
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() => handleViewClick('orders')}
+            className={`whitespace-nowrap shrink-0 transition-colors hover:text-white cursor-pointer ${
+              activeView === 'orders'
+                ? 'text-white underline underline-offset-8 decoration-[#EF4A23] decoration-2'
+                : ''
+            }`}
+          >
+            My Orders
+          </button>
         </nav>
 
         {/* Zone 3: Primary Action Cluster (Cart + Account) */}
@@ -135,11 +121,7 @@ export function Header({
                 title={user.email || 'Account'}
                 className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-[#3749BB] text-white text-sm font-medium hover:bg-[#2D3D9E] transition-colors whitespace-nowrap shrink-0 cursor-pointer min-h-[40px]"
               >
-                {isAdmin ? (
-                  <ShieldCheck className="w-4 h-4 text-amber-300" />
-                ) : (
-                  <UserIcon className="w-4 h-4 text-slate-200" />
-                )}
+                <UserIcon className="w-4 h-4 text-slate-200" />
                 <span className="max-w-[110px] truncate">
                   {user.displayName?.split(' ')[0] || 'Account'}
                 </span>
@@ -217,15 +199,6 @@ export function Header({
             >
               My Orders & Delivery Profile
             </button>
-            {isAdmin && (
-              <button
-                type="button"
-                onClick={() => handleViewClick('admin')}
-                className="w-full text-left px-3 py-2.5 rounded-lg text-sm font-semibold text-white bg-[#3749BB] hover:bg-[#2D3D9E] cursor-pointer min-h-[44px]"
-              >
-                Admin Console
-              </button>
-            )}
             {user ? (
               <button
                 type="button"
