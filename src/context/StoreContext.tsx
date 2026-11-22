@@ -40,10 +40,10 @@ import {
 } from '../lib/firebase';
 import { STARTER_PRODUCTS } from '../lib/starterCatalog';
 import {
-  createCredentialPayload,
-  verifyInitialCredentials,
-  verifyStoredCredentials,
-  type StoredAdminCredential,
+  createCredentialUpdatePayload,
+  deriveAdminProofToken,
+  generateProofNonceId,
+  timingSafeEqual,
 } from '../lib/adminAuth';
 import {
   calculateShippingBDT,
@@ -125,6 +125,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [isAdminDoc, setIsAdminDoc] = useState(false);
+  const [adminProofToken, setAdminProofToken] = useState<string | null>(null);
   const [adminUnlocked, setAdminUnlocked] = useState(false);
   const [adminCredentialUsername, setAdminCredentialUsername] = useState('');
 
@@ -189,10 +190,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setUser(firebaseUser);
       setIsAdminDoc(false);
       setUserProfile(null);
-      if (!firebaseUser) {
-        setAdminUnlocked(false);
-        setAdminCredentialUsername('');
-      }
 
       if (firebaseUser) {
         try {
@@ -262,10 +259,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const unsub = onSnapshot(
       productsQuery,
       (snapshot) => {
-        const items: Product[] = snapshot.docs.map((d) => ({
-          id: d.id,
-          ...(d.data() as Omit<Product, 'id'>),
-        }));
+        const items: Product[] = snapshot.docs
+          .map((d) => ({
+            id: d.id,
+            ...(d.data() as Omit<Product, 'id'>),
+          }))
+          .filter((item) => item.status !== 'archived');
         items.sort((a, b) => {
           if (a.featured !== b.featured) return a.featured ? -1 : 1;
           const tA = a.createdAt?.toMillis?.() ?? 0;
@@ -283,10 +282,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   // Seed Starter Catalog (admin-only)
   const seedStarterCatalog = useCallback(async () => {
-    if (!user || !isAdmin) {
-      throw new Error('Only verified administrators can seed the catalog.');
+    if (!isAdmin && (!adminUnlocked || !adminProofToken)) {
+      throw new Error('Only administrators can seed the catalog.');
     }
     const batch = writeBatch(db);
+    const auditId = adminProofToken ? generateProofNonceId() : undefined;
+    if (adminProofToken && auditId) {
+      batch.set(doc(db, 'adminProofs', auditId), {
+        proof: adminProofToken,
+        createdAt: serverTimestamp(),
+      });
+    }
+    const creatorId = isAdmin && user ? user.uid : 'admin_portal';
     for (const item of STARTER_PRODUCTS) {
       const ref = doc(db, 'products', item.id);
       batch.set(ref, {
@@ -304,7 +311,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         featured: item.featured,
         status: item.status,
         lastOrderId: 'none',
-        createdBy: user.uid,
+        ...(auditId ? { auditId } : {}),
+        createdBy: creatorId,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
@@ -315,7 +323,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, 'products');
     }
-  }, [user, isAdmin, showToast]);
+  }, [user, isAdmin, adminUnlocked, adminProofToken, showToast]);
 
   // Auto-seed once when Admin signs in and Firestore products collection is empty
   useEffect(() => {
@@ -714,7 +722,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // Admin Product CRUD
   const saveProduct = useCallback(
     async (input: ProductInput, existingId?: string) => {
-      if (!user || !isAdmin) {
+      if (!isAdmin && (!adminUnlocked || !adminProofToken)) {
         throw new Error('Administrator authorization required.');
       }
       const errMsg = validateProductInput(input);
@@ -741,14 +749,25 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         status: input.status,
       };
 
+      const batch = writeBatch(db);
+      const auditId = adminProofToken ? generateProofNonceId() : undefined;
+      if (adminProofToken && auditId) {
+        batch.set(doc(db, 'adminProofs', auditId), {
+          proof: adminProofToken,
+          createdAt: serverTimestamp(),
+        });
+      }
+
       if (existingId) {
         const prodRef = doc(db, 'products', existingId);
+        batch.update(prodRef, {
+          ...baseData,
+          ...(auditId ? { auditId } : {}),
+          updatedAt: serverTimestamp(),
+        });
         try {
-          await updateDoc(prodRef, {
-            ...baseData,
-            updatedAt: serverTimestamp(),
-          });
-          showToast(`Updated "${baseData.title}".`, 'success');
+          await batch.commit();
+          showToast(`Updated "${baseData.title}" in Firestore.`, 'success');
         } catch (err) {
           handleFirestoreError(err, OperationType.UPDATE, `products/${existingId}`);
         }
@@ -760,127 +779,150 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           .slice(0, 40);
         const newId = `${slug || 'item'}-${Date.now().toString(36)}`;
         const prodRef = doc(db, 'products', newId);
+        batch.set(prodRef, {
+          ...baseData,
+          ...(auditId ? { auditId } : {}),
+          soldCount: 0,
+          lastOrderId: 'none',
+          createdBy: isAdmin && user ? user.uid : 'admin_portal',
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
         try {
-          await setDoc(prodRef, {
-            ...baseData,
-            soldCount: 0,
-            lastOrderId: 'none',
-            createdBy: user.uid,
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
-          });
-          showToast(`Published "${baseData.title}" to storefront.`, 'success');
+          await batch.commit();
+          showToast(`Published "${baseData.title}" to Firestore.`, 'success');
         } catch (err) {
           handleFirestoreError(err, OperationType.CREATE, `products/${newId}`);
         }
       }
     },
-    [user, isAdmin, showToast]
+    [user, isAdmin, adminUnlocked, adminProofToken, showToast]
   );
 
   const adjustProductStock = useCallback(
     async (productId: string, newStock: number) => {
-      if (!user || !isAdmin) return;
+      if (!isAdmin && (!adminUnlocked || !adminProofToken)) return;
       const clamped = Math.max(0, Math.min(100000, Math.trunc(newStock)));
-      try {
-        await updateDoc(doc(db, 'products', productId), {
-          stock: clamped,
-          updatedAt: serverTimestamp(),
+      const batch = writeBatch(db);
+      const auditId = adminProofToken ? generateProofNonceId() : undefined;
+      if (adminProofToken && auditId) {
+        batch.set(doc(db, 'adminProofs', auditId), {
+          proof: adminProofToken,
+          createdAt: serverTimestamp(),
         });
+      }
+      batch.update(doc(db, 'products', productId), {
+        stock: clamped,
+        ...(auditId ? { auditId } : {}),
+        updatedAt: serverTimestamp(),
+      });
+      try {
+        await batch.commit();
         showToast(`Stock updated to ${clamped} units.`, 'success');
       } catch (err) {
         handleFirestoreError(err, OperationType.UPDATE, `products/${productId}`);
       }
     },
-    [user, isAdmin, showToast]
+    [isAdmin, adminUnlocked, adminProofToken, showToast]
   );
 
   const deleteProduct = useCallback(
     async (productId: string) => {
-      if (!user || !isAdmin) return;
+      if (!isAdmin && (!adminUnlocked || !adminProofToken)) return;
       try {
-        await deleteDoc(doc(db, 'products', productId));
+        if (isAdmin) {
+          await deleteDoc(doc(db, 'products', productId));
+        } else if (adminProofToken) {
+          const batch = writeBatch(db);
+          const auditId = generateProofNonceId();
+          batch.set(doc(db, 'adminProofs', auditId), {
+            proof: adminProofToken,
+            createdAt: serverTimestamp(),
+          });
+          batch.update(doc(db, 'products', productId), {
+            status: 'archived',
+            auditId,
+            updatedAt: serverTimestamp(),
+          });
+          await batch.commit();
+        }
         showToast('Product removed from catalog.', 'info');
       } catch (err) {
         handleFirestoreError(err, OperationType.DELETE, `products/${productId}`);
       }
     },
-    [user, isAdmin, showToast]
+    [isAdmin, adminUnlocked, adminProofToken, showToast]
   );
 
   const updateOrderStatus = useCallback(
     async (orderId: string, status: OrderStatus, notes?: string) => {
-      if (!user || !isAdmin) return;
+      if (!isAdmin && (!adminUnlocked || !adminProofToken)) return;
+      const batch = writeBatch(db);
+      const auditId = adminProofToken ? generateProofNonceId() : undefined;
+      if (adminProofToken && auditId) {
+        batch.set(doc(db, 'adminProofs', auditId), {
+          proof: adminProofToken,
+          createdAt: serverTimestamp(),
+        });
+      }
+      const patch: Record<string, unknown> = {
+        status,
+        ...(auditId ? { auditId } : {}),
+        updatedAt: serverTimestamp(),
+      };
+      if (typeof notes === 'string') {
+        patch.notes = sanitizeText(notes, 500);
+      }
+      batch.update(doc(db, 'orders', orderId), patch);
       try {
-        const patch: Record<string, unknown> = {
-          status,
-          updatedAt: serverTimestamp(),
-        };
-        if (typeof notes === 'string') {
-          patch.notes = sanitizeText(notes, 500);
-        }
-        await updateDoc(doc(db, 'orders', orderId), patch);
+        await batch.commit();
         showToast(`Order status changed to ${status}.`, 'success');
       } catch (err) {
         handleFirestoreError(err, OperationType.UPDATE, `orders/${orderId}`);
       }
     },
-    [user, isAdmin, showToast]
+    [isAdmin, adminUnlocked, adminProofToken, showToast]
   );
 
   const unlockAdminPortal = useCallback(
     async (username: string, password: string) => {
-      if (!user || !isAdmin) {
-        throw new Error('Please sign in with the authorized Google Admin account first.');
+      const cleanUser = username.trim();
+      if (cleanUser.length < 3 || password.length < 4) {
+        throw new Error('Invalid admin username or password.');
       }
-      const credRef = doc(db, 'adminConfig', 'credentials');
-      let snap;
+      const token = await deriveAdminProofToken(cleanUser, password);
+      const nonceId = generateProofNonceId();
       try {
-        snap = await getDoc(credRef);
+        await setDoc(doc(db, 'adminProofs', nonceId), {
+          proof: token,
+          createdAt: serverTimestamp(),
+        });
       } catch (err) {
-        handleFirestoreError(err, OperationType.GET, 'adminConfig/credentials');
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.toLowerCase().includes('permission') || msg.toLowerCase().includes('insufficient')) {
+          throw new Error('Invalid admin username or password.');
+        }
+        throw new Error('Unable to verify admin login. Please check your connection.');
       }
 
-      if (snap.exists()) {
-        const stored = snap.data() as StoredAdminCredential;
-        const ok = await verifyStoredCredentials(username, password, stored);
-        if (!ok) {
-          throw new Error('Invalid admin username or password.');
-        }
-        setAdminCredentialUsername(stored.username);
-        setAdminUnlocked(true);
-        showToast('Admin panel unlocked.', 'success');
-      } else {
-        const ok = await verifyInitialCredentials(username, password);
-        if (!ok) {
-          throw new Error('Invalid admin username or password.');
-        }
-        const payload = await createCredentialPayload(username.trim(), password);
-        try {
-          await setDoc(credRef, {
-            ...payload,
-            updatedBy: user.uid,
-            updatedAt: serverTimestamp(),
-          });
-        } catch (err) {
-          handleFirestoreError(err, OperationType.CREATE, 'adminConfig/credentials');
-        }
-        setAdminCredentialUsername(payload.username);
-        setAdminUnlocked(true);
-        showToast('Admin panel unlocked.', 'success');
-      }
+      setAdminProofToken(token);
+      setAdminCredentialUsername(cleanUser);
+      setAdminUnlocked(true);
+      showToast('Admin panel unlocked.', 'success');
     },
-    [user, isAdmin, showToast]
+    [showToast]
   );
 
   const lockAdminPortal = useCallback(() => {
+    setAdminProofToken(null);
     setAdminUnlocked(false);
+    setAdminCredentialUsername('');
     showToast('Admin panel locked.', 'info');
   }, [showToast]);
 
   const updateAdminCredentials = useCallback(
     async (currentPassword: string, newUsername: string, newPassword: string) => {
-      if (!user || !isAdmin || !adminUnlocked) {
+      if (!adminUnlocked || !adminProofToken) {
         throw new Error('Admin session is locked.');
       }
       const cleanUser = newUsername.trim();
@@ -891,40 +933,36 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         throw new Error('Password must be between 4 and 100 characters.');
       }
 
-      const credRef = doc(db, 'adminConfig', 'credentials');
-      let snap;
-      try {
-        snap = await getDoc(credRef);
-      } catch (err) {
-        handleFirestoreError(err, OperationType.GET, 'adminConfig/credentials');
+      const activeUsername = adminCredentialUsername || cleanUser;
+      const currentToken = await deriveAdminProofToken(activeUsername, currentPassword);
+      if (!timingSafeEqual(currentToken, adminProofToken)) {
+        throw new Error('Current password is incorrect.');
       }
 
-      if (snap.exists()) {
-        const stored = snap.data() as StoredAdminCredential;
-        const validCurrent = await verifyStoredCredentials(
-          stored.username,
-          currentPassword,
-          stored
-        );
-        if (!validCurrent) {
-          throw new Error('Current password is incorrect.');
-        }
-      }
+      const nonceId = generateProofNonceId();
+      const payload = await createCredentialUpdatePayload(cleanUser, newPassword, nonceId);
+      const batch = writeBatch(db);
+      batch.set(doc(db, 'adminProofs', nonceId), {
+        proof: currentToken,
+        createdAt: serverTimestamp(),
+      });
+      batch.set(doc(db, 'adminConfig', 'credentials'), {
+        username: payload.username,
+        proofHash: payload.proofHash,
+        auditId: payload.auditId,
+        updatedAt: serverTimestamp(),
+      });
 
-      const payload = await createCredentialPayload(cleanUser, newPassword);
       try {
-        await setDoc(credRef, {
-          ...payload,
-          updatedBy: user.uid,
-          updatedAt: serverTimestamp(),
-        });
+        await batch.commit();
+        setAdminProofToken(payload.token);
         setAdminCredentialUsername(payload.username);
-        showToast('Admin username and password updated.', 'success');
+        showToast('Admin username and password saved to Firestore.', 'success');
       } catch (err) {
         handleFirestoreError(err, OperationType.UPDATE, 'adminConfig/credentials');
       }
     },
-    [user, isAdmin, adminUnlocked, showToast]
+    [adminUnlocked, adminProofToken, adminCredentialUsername, showToast]
   );
 
   const value: StoreContextValue = {

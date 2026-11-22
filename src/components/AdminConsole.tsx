@@ -62,11 +62,13 @@ function createFreshPostForm(): ProductInput {
 export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
   const {
     isAdmin,
+    adminUnlocked,
     products,
     hasFirestoreProducts,
     orders,
     customers,
     adminCredentialUsername,
+    signInWithGoogle,
     seedStarterCatalog,
     saveProduct,
     adjustProductStock,
@@ -89,7 +91,7 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
 
   // Admin Login & Password Update State ('security' tab)
   const [currentPassword, setCurrentPassword] = useState('');
-  const [newUsername, setNewUsername] = useState(adminCredentialUsername || 'alamgir');
+  const [newUsername, setNewUsername] = useState(adminCredentialUsername || '');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showCurrentPw, setShowCurrentPw] = useState(false);
@@ -247,15 +249,15 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
     });
   }, [orders, orderFilter, orderSearch]);
 
-  if (!isAdmin) {
+  if (!adminUnlocked) {
     return (
       <section className="max-w-[720px] mx-auto px-4 py-16 text-center">
         <div className="bg-white border border-slate-200 rounded-xl p-10 space-y-4">
           <h1 className="font-display text-2xl font-bold text-slate-900">
-            Administrator Access Required
+            Admin Panel Locked
           </h1>
           <p className="text-sm text-slate-600">
-            This console is restricted to verified AKIB Technologies administrators.
+            Enter your admin username and password at /admin to manage AKIB Technologies.
           </p>
           <button
             type="button"
@@ -355,7 +357,7 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
       summary: product.summary,
       specs: product.specs.length > 0 ? product.specs : [{ label: 'Warranty', value: '2 Years' }],
       featured: product.featured,
-      status: product.status,
+      status: product.status === 'draft' ? 'draft' : 'active',
     });
     setFormError(null);
     setFormOpen(true);
@@ -1184,6 +1186,21 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
           {/* TAB 3: ORDER MANAGEMENT */}
           {activeTab === 'orders' && (
             <div className="space-y-4">
+              {!isAdmin && (
+                <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="text-xs sm:text-sm text-blue-950">
+                    <span className="font-semibold">Customer Privacy Protection: </span>
+                    Sign in with your authorized Google account to load private customer phone numbers, shipping addresses, and order records.
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void signInWithGoogle()}
+                    className="px-4 py-2 rounded bg-[#3749BB] text-white text-xs font-semibold hover:bg-[#2A3998] shrink-0 cursor-pointer min-h-[38px]"
+                  >
+                    Connect Google Admin
+                  </button>
+                </div>
+              )}
               <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
                 <div className="p-5 border-b border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-4">
                   <div className="flex flex-wrap items-center gap-1.5">
@@ -1336,6 +1353,17 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
                         maxLength={500}
                         value={orderNoteDraft}
                         onChange={(e) => setOrderNoteDraft(e.target.value)}
+                        onKeyDown={async (e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            await updateOrderStatus(
+                              selectedOrder.id,
+                              selectedOrder.status,
+                              orderNoteDraft
+                            );
+                            setSelectedOrder(null);
+                          }
+                        }}
                         placeholder="Add tracking ID or dispatch remarks..."
                         className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700"
                       />
@@ -1362,15 +1390,31 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
 
           {/* TAB 4: CUSTOMER ANALYTICS & DIRECTORY */}
           {activeTab === 'customers' && (
-            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-              <div className="p-5 border-b border-slate-200">
-                <h2 className="font-display text-lg font-semibold text-slate-900">
-                  Customer Spend & Activity Directory
-                </h2>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Aggregated real-time insights across registered profiles and verified orders.
-                </p>
-              </div>
+            <div className="space-y-4">
+              {!isAdmin && (
+                <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="text-xs sm:text-sm text-blue-950">
+                    <span className="font-semibold">Customer Privacy Protection: </span>
+                    Customer emails and phone numbers require connecting your authorized Google Admin account.
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void signInWithGoogle()}
+                    className="px-4 py-2 rounded bg-[#3749BB] text-white text-xs font-semibold hover:bg-[#2A3998] shrink-0 cursor-pointer min-h-[38px]"
+                  >
+                    Connect Google Admin
+                  </button>
+                </div>
+              )}
+              <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                <div className="p-5 border-b border-slate-200">
+                  <h2 className="font-display text-lg font-semibold text-slate-900">
+                    Customer Spend & Activity Directory
+                  </h2>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Aggregated real-time insights across registered profiles and verified orders.
+                  </p>
+                </div>
               {analytics.customerList.length === 0 ? (
                 <div className="p-12 text-center text-sm text-slate-500">
                   No customer activity recorded yet.
@@ -1418,6 +1462,7 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
                   </table>
                 </div>
               )}
+              </div>
             </div>
           )}
 

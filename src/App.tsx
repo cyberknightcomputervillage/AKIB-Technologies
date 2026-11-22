@@ -76,7 +76,7 @@ function AppShell() {
         )}
 
         {activeView === 'admin' &&
-          (isAdmin && adminUnlocked ? (
+          (adminUnlocked ? (
             <AdminConsole onBackToStore={() => navigateTo('store')} />
           ) : (
             <AdminLoginGate onBackToStore={() => navigateTo('store')} />

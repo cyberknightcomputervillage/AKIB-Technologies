@@ -138,6 +138,11 @@
           "type": "string",
           "maxLength": 128
         },
+        "auditId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
         "createdBy": {
           "type": "string",
           "minLength": 1,
@@ -239,6 +244,11 @@
           "type": "string",
           "maxLength": 500
         },
+        "auditId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time"
@@ -267,9 +277,27 @@
         "updatedAt"
       ]
     },
+    "AdminProof": {
+      "title": "AdminProof",
+      "description": "Write-only atomic proof token verified against SHA-256 hash in Firestore rules.",
+      "type": "object",
+      "properties": {
+        "proof": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[a-f0-9]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["proof", "createdAt"]
+    },
     "AdminCredential": {
       "title": "AdminCredential",
-      "description": "Salted PBKDF2-SHA256 admin portal username and password hash stored exclusively for verified admins.",
+      "description": "Double-SHA-256 verified admin portal credential hash and changeable username.",
       "type": "object",
       "properties": {
         "username": {
@@ -277,22 +305,15 @@
           "minLength": 3,
           "maxLength": 60
         },
-        "passwordHash": {
+        "proofHash": {
           "type": "string",
           "minLength": 64,
           "maxLength": 64,
           "pattern": "^[a-f0-9]+$"
         },
-        "salt": {
+        "auditId": {
           "type": "string",
-          "minLength": 16,
-          "maxLength": 64
-        },
-        "iterations": {
-          "type": "integer"
-        },
-        "updatedBy": {
-          "type": "string",
+          "minLength": 1,
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$"
         },
@@ -301,7 +322,7 @@
           "format": "date-time"
         }
       },
-      "required": ["username", "passwordHash", "salt", "iterations", "updatedBy", "updatedAt"]
+      "required": ["username", "proofHash", "auditId", "updatedAt"]
     }
   },
   "firestore": {
@@ -311,11 +332,17 @@
       },
       "description": "Explicit admin UID allowlist documents."
     },
+    "/adminProofs/{proofId}": {
+      "schema": {
+        "$ref": "#/entities/AdminProof"
+      },
+      "description": "Write-only one-time batch proof documents authorizing admin mutations."
+    },
     "/adminConfig/{configId}": {
       "schema": {
         "$ref": "#/entities/AdminCredential"
       },
-      "description": "Protected admin portal login hash and changeable username."
+      "description": "Non-readable admin portal credential proof hash and changeable username."
     },
     "/users/{userId}": {
       "schema": {

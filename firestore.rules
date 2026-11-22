@@ -40,6 +40,33 @@ service cloud.firestore {
       );
     }
 
+    function initialAdminProofHash() {
+      return 'a262fc9b6d783e79cbd1f1bbc179122bdde31a8c1708c8164360886bb045ba40';
+    }
+
+    function hasValidCredProofHash() {
+      return exists(/databases/$(database)/documents/adminConfig/credentials)
+        && ('proofHash' in get(/databases/$(database)/documents/adminConfig/credentials).data)
+        && get(/databases/$(database)/documents/adminConfig/credentials).data.proofHash is string
+        && get(/databases/$(database)/documents/adminConfig/credentials).data.proofHash.size() == 64;
+    }
+
+    function isValidAdminProofToken(proof) {
+      return proof is string
+        && proof.size() == 64
+        && proof.matches('^[a-f0-9]+$')
+        && (
+          (hasValidCredProofHash() && hashing.sha256(proof).toHexString().lower() == get(/databases/$(database)/documents/adminConfig/credentials).data.proofHash)
+          || (!hasValidCredProofHash() && hashing.sha256(proof).toHexString().lower() == initialAdminProofHash())
+        );
+    }
+
+    function isValidAdminProofBatch(auditId) {
+      return isValidId(auditId)
+        && existsAfter(/databases/$(database)/documents/adminProofs/$(auditId))
+        && getAfter(/databases/$(database)/documents/adminProofs/$(auditId)).data.createdAt == request.time;
+    }
+
     // ---------------------------------------------------------
     // Validation Blueprints (Pure static checks, no DB reads)
     // ---------------------------------------------------------
@@ -50,6 +77,22 @@ service cloud.firestore {
         && data.email is string && data.email.size() >= 3 && data.email.size() <= 160
         && isValidId(data.grantedBy)
         && data.createdAt is timestamp;
+    }
+
+    function isValidAdminProof(data) {
+      return data.keys().hasAll(['proof', 'createdAt'])
+        && data.keys().hasOnly(['proof', 'createdAt'])
+        && data.proof is string && data.proof.size() == 64 && data.proof.matches('^[a-f0-9]+$')
+        && data.createdAt is timestamp;
+    }
+
+    function isValidAdminCredential(data) {
+      return data.keys().hasAll(['username', 'proofHash', 'auditId', 'updatedAt'])
+        && data.keys().hasOnly(['username', 'proofHash', 'auditId', 'updatedAt'])
+        && data.username is string && data.username.size() >= 3 && data.username.size() <= 60
+        && data.proofHash is string && data.proofHash.size() == 64 && data.proofHash.matches('^[a-f0-9]+$')
+        && isValidId(data.auditId)
+        && data.updatedAt is timestamp;
     }
 
     function isValidUser(data) {
@@ -81,7 +124,7 @@ service cloud.firestore {
         && data.keys().hasOnly([
           'title', 'brand', 'category', 'sku', 'price', 'compareAtPrice',
           'stock', 'soldCount', 'imageUrl', 'summary', 'specs',
-          'featured', 'status', 'lastOrderId', 'createdBy', 'createdAt', 'updatedAt'
+          'featured', 'status', 'lastOrderId', 'auditId', 'createdBy', 'createdAt', 'updatedAt'
         ])
         && data.title is string && data.title.size() >= 2 && data.title.size() <= 160
         && data.brand is string && data.brand.size() >= 1 && data.brand.size() <= 60
@@ -105,8 +148,9 @@ service cloud.firestore {
           )
         )
         && data.featured is bool
-        && data.status in ['active', 'draft']
+        && data.status in ['active', 'draft', 'archived']
         && data.lastOrderId is string && data.lastOrderId.size() >= 1 && data.lastOrderId.size() <= 128
+        && (!('auditId' in data) || isValidId(data.auditId))
         && isValidId(data.createdBy)
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
@@ -123,7 +167,7 @@ service cloud.firestore {
           'orderNumber', 'userId', 'customerName', 'customerEmail',
           'customerPhone', 'shippingAddress', 'city', 'paymentMethod',
           'items', 'subtotal', 'shippingFee', 'totalAmount',
-          'status', 'notes', 'createdAt', 'updatedAt'
+          'status', 'notes', 'auditId', 'createdAt', 'updatedAt'
         ])
         && data.orderNumber is string && data.orderNumber.size() >= 4 && data.orderNumber.size() <= 32 && data.orderNumber.matches('^[a-zA-Z0-9_\\-]+$')
         && isValidId(data.userId)
@@ -148,23 +192,13 @@ service cloud.firestore {
         && data.totalAmount is number && data.totalAmount == data.subtotal + data.shippingFee
         && data.status in ['pending', 'processing', 'shipped', 'delivered', 'cancelled']
         && data.notes is string && data.notes.size() <= 500
+        && (!('auditId' in data) || isValidId(data.auditId))
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
 
-    function isValidAdminCredential(data) {
-      return data.keys().hasAll(['username', 'passwordHash', 'salt', 'iterations', 'updatedBy', 'updatedAt'])
-        && data.keys().hasOnly(['username', 'passwordHash', 'salt', 'iterations', 'updatedBy', 'updatedAt'])
-        && data.username is string && data.username.size() >= 3 && data.username.size() <= 60
-        && data.passwordHash is string && data.passwordHash.size() == 64 && data.passwordHash.matches('^[a-f0-9]+$')
-        && data.salt is string && data.salt.size() >= 16 && data.salt.size() <= 64
-        && data.iterations is int && data.iterations >= 100000 && data.iterations <= 500000
-        && isValidId(data.updatedBy)
-        && data.updatedAt is timestamp;
-    }
-
     // ---------------------------------------------------------
-    // Collection Rules (Auth -> Static Validation -> Relational)
+    // Collection Rules (Auth/Proof -> Static Validation -> Relational)
     // ---------------------------------------------------------
     match /test/connection {
       allow get: if true;
@@ -183,14 +217,22 @@ service cloud.firestore {
       allow delete: if isVerifiedUser() && isValidId(adminId) && adminId != request.auth.uid && isAdmin();
     }
 
+    match /adminProofs/{proofId} {
+      allow read: if false;
+      allow create: if isValidId(proofId)
+        && isValidAdminProof(incoming())
+        && incoming().createdAt == request.time
+        && isValidAdminProofToken(incoming().proof);
+      allow update, delete: if false;
+    }
+
     match /adminConfig/{configId} {
-      allow get: if isVerifiedUser() && isValidId(configId) && configId == 'credentials' && isAdmin();
-      allow list: if false;
-      allow create, update: if isVerifiedUser() && isValidId(configId) && configId == 'credentials'
+      allow get, list: if false;
+      allow create, update: if isValidId(configId)
+        && configId == 'credentials'
         && isValidAdminCredential(incoming())
-        && incoming().updatedBy == request.auth.uid
         && incoming().updatedAt == request.time
-        && isAdmin();
+        && (isAdmin() || isValidAdminProofBatch(incoming().auditId));
       allow delete: if false;
     }
 
@@ -220,27 +262,33 @@ service cloud.firestore {
     match /products/{productId} {
       allow get: if isValidId(productId) && (existing().status == 'active' || isAdmin());
       allow list: if resource.data.status == 'active' || isAdmin();
-      allow create: if isVerifiedUser() && isValidId(productId) && isValidProduct(incoming())
-        && incoming().createdBy == request.auth.uid
+      allow create: if isValidId(productId) && isValidProduct(incoming())
         && incoming().soldCount == 0
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time
-        && isAdmin();
-      allow update: if isVerifiedUser() && isValidId(productId) && isValidProduct(incoming()) && (
-        // Tier 1: Admin full catalog & inventory update
+        && (
+          (isAdmin() && incoming().createdBy == request.auth.uid) ||
+          (('auditId' in incoming()) && isValidAdminProofBatch(incoming().auditId) && incoming().createdBy == 'admin_portal')
+        );
+      allow update: if isValidId(productId) && isValidProduct(incoming()) && (
+        // Tier 1: Admin full catalog & inventory update (Google Admin OR Atomic Credential Proof Batch)
         (
-          isAdmin()
+          (
+            isAdmin() ||
+            (('auditId' in incoming()) && isValidAdminProofBatch(incoming().auditId))
+          )
           && incoming().createdBy == existing().createdBy
           && incoming().createdAt == existing().createdAt
           && incoming().updatedAt == request.time
           && incoming().diff(existing()).affectedKeys().hasOnly([
             'title', 'brand', 'category', 'sku', 'price', 'compareAtPrice',
-            'stock', 'imageUrl', 'summary', 'specs', 'featured', 'status', 'updatedAt'
+            'stock', 'imageUrl', 'summary', 'specs', 'featured', 'status', 'auditId', 'updatedAt'
           ])
         ) ||
         // Tier 2: Verified Customer atomic stock deduction coupled with Order creation
         (
-          existing().status == 'active'
+          isVerifiedUser()
+          && existing().status == 'active'
           && incoming().diff(existing()).affectedKeys().hasOnly(['stock', 'soldCount', 'lastOrderId', 'updatedAt'])
           && incoming().stock < existing().stock
           && incoming().stock >= 0
@@ -266,7 +314,7 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/products/$(incoming().items[0].productId))
         && get(/databases/$(database)/documents/products/$(incoming().items[0].productId)).data.price == incoming().items[0].price
         && (incoming().items.size() > 1 || incoming().subtotal == incoming().items[0].price * incoming().items[0].quantity);
-      allow update: if isVerifiedUser() && isValidId(orderId) && isValidOrder(incoming())
+      allow update: if isValidId(orderId) && isValidOrder(incoming())
         && incoming().orderNumber == existing().orderNumber
         && incoming().userId == existing().userId
         && incoming().items == existing().items
@@ -278,12 +326,16 @@ service cloud.firestore {
         && (
           // Tier 1: Admin order lifecycle management (can correct states)
           (
-            isAdmin()
-            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'notes', 'updatedAt'])
+            (
+              isAdmin() ||
+              (('auditId' in incoming()) && isValidAdminProofBatch(incoming().auditId))
+            )
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'notes', 'auditId', 'updatedAt'])
           ) ||
           // Tier 2: Customer may only cancel their own pending order (terminal states locked)
           (
-            existing().userId == request.auth.uid
+            isVerifiedUser()
+            && existing().userId == request.auth.uid
             && existing().status == 'pending'
             && incoming().status == 'cancelled'
             && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])

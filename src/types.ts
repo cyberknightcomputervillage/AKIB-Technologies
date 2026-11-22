@@ -12,7 +12,7 @@ export const PRODUCT_CATEGORIES = [
 
 export type ProductCategory = (typeof PRODUCT_CATEGORIES)[number];
 
-export type ProductStatus = 'active' | 'draft';
+export type ProductStatus = 'active' | 'draft' | 'archived';
 
 export interface ProductSpec {
   label: string;

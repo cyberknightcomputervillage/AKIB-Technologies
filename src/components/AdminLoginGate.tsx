@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ArrowLeft, CheckCircle2, Eye, EyeOff, Lock, ShieldCheck } from 'lucide-react';
+import { ArrowLeft, Eye, EyeOff, Lock } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 
 interface AdminLoginGateProps {
@@ -7,7 +7,7 @@ interface AdminLoginGateProps {
 }
 
 export function AdminLoginGate({ onBackToStore }: AdminLoginGateProps) {
-  const { user, isAdmin, signInWithGoogle, logout, unlockAdminPortal } = useStore();
+  const { unlockAdminPortal } = useStore();
 
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -15,16 +15,28 @@ export function AdminLoginGate({ onBackToStore }: AdminLoginGateProps) {
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const attemptLogin = async () => {
+    if (submitting) return;
     setErrorMsg(null);
     setSubmitting(true);
     try {
       await unlockAdminPortal(username, password);
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'Invalid admin credentials.');
+      setErrorMsg(err instanceof Error ? err.message : 'Invalid admin username or password.');
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    void attemptLogin();
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      void attemptLogin();
     }
   };
 
@@ -38,57 +50,20 @@ export function AdminLoginGate({ onBackToStore }: AdminLoginGateProps) {
             <div>
               <h1 className="font-display text-lg font-bold">AKIB Technologies Admin</h1>
               <p className="text-xs text-slate-300">
-                Authorized Store Management & Product Publishing
+                Sign in with your admin username and password
               </p>
             </div>
           </div>
         </div>
 
         <div className="p-6 space-y-5">
-          {/* Firebase Admin Session Step */}
-          <div className="p-4 rounded-lg border border-slate-200 bg-slate-50 space-y-2.5">
-            {isAdmin && user ? (
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2 text-xs text-emerald-800 font-medium min-w-0">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
-                  <span className="truncate">Database Verified: {user.email}</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => void logout()}
-                  className="text-xs font-semibold text-slate-600 hover:text-slate-900 underline shrink-0 cursor-pointer"
-                >
-                  Switch
-                </button>
-              </div>
-            ) : (
-              <>
-                <div className="flex items-center gap-2 text-xs font-semibold text-slate-800">
-                  <ShieldCheck className="w-4 h-4 text-[#3749BB] shrink-0" />
-                  <span>
-                    {user
-                      ? `Signed in as ${user.email} (Not Admin)`
-                      : 'Step 1: Verify Authorized Google Account'}
-                  </span>
-                </div>
-                <p className="text-xs text-slate-500">
-                  Database writes require signing in with your authorized Firebase admin Google account first.
-                </p>
-                <button
-                  type="button"
-                  onClick={() => void signInWithGoogle()}
-                  className="w-full px-4 py-2.5 rounded bg-[#3749BB] text-white text-xs font-semibold hover:bg-[#2A3998] transition-colors cursor-pointer min-h-[40px]"
-                >
-                  {user ? 'Switch to Admin Google Account' : 'Verify Admin Google Account'}
-                </button>
-              </>
-            )}
-          </div>
-
-          {/* Username & Password Form */}
+          {/* Username & Password Form (Enter key supported) */}
           <form onSubmit={handleSubmit} className="space-y-4">
             {errorMsg && (
-              <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700">
+              <div
+                role="alert"
+                className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700"
+              >
                 {errorMsg}
               </div>
             )}
@@ -104,9 +79,11 @@ export function AdminLoginGate({ onBackToStore }: AdminLoginGateProps) {
                 id="admin-username"
                 type="text"
                 required
+                autoFocus
                 autoComplete="username"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
+                onKeyDown={handleKeyDown}
                 placeholder="Enter admin username"
                 className="w-full px-3.5 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
               />
@@ -127,6 +104,7 @@ export function AdminLoginGate({ onBackToStore }: AdminLoginGateProps) {
                   autoComplete="current-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
+                  onKeyDown={handleKeyDown}
                   placeholder="Enter admin password"
                   className="w-full pl-3.5 pr-10 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
                 />
@@ -143,11 +121,15 @@ export function AdminLoginGate({ onBackToStore }: AdminLoginGateProps) {
 
             <button
               type="submit"
-              disabled={submitting || !isAdmin}
+              disabled={submitting}
               className="w-full px-5 py-3 rounded bg-[#EF4A23] text-white text-sm font-semibold hover:bg-[#D93E18] disabled:bg-slate-300 disabled:text-slate-500 transition-colors cursor-pointer min-h-[44px]"
             >
-              {submitting ? 'Verifying...' : 'Sign In to Admin Panel'}
+              {submitting ? 'Signing In...' : 'Sign In to Admin Panel'}
             </button>
+
+            <p className="text-[11px] text-center text-slate-400">
+              Press Enter to sign in
+            </p>
           </form>
 
           <div className="pt-2 border-t border-slate-200 text-center">
