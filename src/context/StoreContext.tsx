@@ -18,7 +18,6 @@ import {
 } from 'firebase/auth';
 import {
   collection,
-  deleteDoc,
   doc,
   getDoc,
   onSnapshot,
@@ -63,12 +62,15 @@ import type {
   OrderStatus,
   PaymentMethod,
   Product,
+  UserAccess,
   UserProfile,
 } from '../types';
 
 interface StoreContextValue {
   user: User | null;
   userProfile: UserProfile | null;
+  userAccess: UserAccess | null;
+  userAccessList: UserAccess[];
   authReady: boolean;
   isAdmin: boolean;
   products: Product[];
@@ -100,11 +102,35 @@ interface StoreContextValue {
     defaultAddress: string;
     city: string;
   }) => Promise<void>;
-  seedStarterCatalog: () => Promise<void>;
-  saveProduct: (input: ProductInput, existingId?: string) => Promise<void>;
-  adjustProductStock: (productId: string, newStock: number) => Promise<void>;
-  deleteProduct: (productId: string) => Promise<void>;
-  updateOrderStatus: (orderId: string, status: OrderStatus, notes?: string) => Promise<void>;
+  seedStarterCatalog: (adminPassword: string) => Promise<void>;
+  saveProduct: (
+    input: ProductInput,
+    existingId?: string,
+    adminPassword?: string
+  ) => Promise<void>;
+  adjustProductStock: (
+    productId: string,
+    newStock: number,
+    adminPassword: string
+  ) => Promise<void>;
+  deleteProduct: (productId: string, adminPassword: string) => Promise<void>;
+  updateOrderStatus: (
+    orderId: string,
+    status: OrderStatus,
+    adminPassword: string,
+    notes?: string
+  ) => Promise<void>;
+  updateUserPostPermission: (
+    targetUser: {
+      uid: string;
+      email: string;
+      displayName: string;
+      photoURL?: string;
+    },
+    patch: { canAddPost: boolean; canEditPost: boolean },
+    adminPassword: string
+  ) => Promise<void>;
+  verifyAdminActionPassword: (adminPassword: string) => Promise<string>;
   adminUnlocked: boolean;
   adminCredentialUsername: string;
   unlockAdminPortal: (username: string, password: string) => Promise<void>;
@@ -123,6 +149,8 @@ const CART_STORAGE_KEY = 'akib_tech_cart_v1';
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [userAccess, setUserAccess] = useState<UserAccess | null>(null);
+  const [userAccessList, setUserAccessList] = useState<UserAccess[]>([]);
   const [authReady, setAuthReady] = useState(false);
   const [isAdminDoc, setIsAdminDoc] = useState(false);
   const [adminProofToken, setAdminProofToken] = useState<string | null>(null);
@@ -154,6 +182,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   } | null>(null);
   const toastTimerRef = useRef<number | null>(null);
   const autoSeededRef = useRef(false);
+  const recordedLoginUidRef = useRef<string | null>(null);
 
   const showToast = useCallback(
     (message: string, type: 'success' | 'error' | 'info' = 'info') => {
@@ -190,8 +219,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setUser(firebaseUser);
       setIsAdminDoc(false);
       setUserProfile(null);
+      setUserAccess(null);
 
-      if (firebaseUser) {
+      if (!firebaseUser) {
+        recordedLoginUidRef.current = null;
+      } else {
         try {
           const adminSnap = await getDoc(doc(db, 'admins', firebaseUser.uid));
           setIsAdminDoc(adminSnap.exists());
@@ -225,18 +257,59 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           } catch (err) {
             handleFirestoreError(err, OperationType.WRITE, `users/${firebaseUser.uid}`);
           }
+
+          if (recordedLoginUidRef.current !== firebaseUser.uid) {
+            recordedLoginUidRef.current = firebaseUser.uid;
+            const accessRef = doc(db, 'userAccess', firebaseUser.uid);
+            const safeName =
+              sanitizeText(firebaseUser.displayName || 'Customer', 120) || 'Customer';
+            const safeEmail = sanitizeText(firebaseUser.email || '', 160);
+            const safePhoto = sanitizeText(firebaseUser.photoURL || '', 1000);
+            try {
+              const accessSnap = await getDoc(accessRef);
+              if (!accessSnap.exists()) {
+                await setDoc(accessRef, {
+                  uid: firebaseUser.uid,
+                  email: safeEmail,
+                  displayName: safeName,
+                  photoURL: safePhoto,
+                  loginCount: 1,
+                  canAddPost: false,
+                  canEditPost: false,
+                  lastLoginAt: serverTimestamp(),
+                  createdAt: serverTimestamp(),
+                  updatedAt: serverTimestamp(),
+                });
+              } else {
+                const prevCount = Number(accessSnap.data()?.loginCount || 0);
+                await updateDoc(accessRef, {
+                  displayName: safeName,
+                  photoURL: safePhoto,
+                  loginCount: Math.max(1, prevCount + 1),
+                  lastLoginAt: serverTimestamp(),
+                  updatedAt: serverTimestamp(),
+                });
+              }
+            } catch (err) {
+              handleFirestoreError(
+                err,
+                OperationType.WRITE,
+                `userAccess/${firebaseUser.uid}`
+              );
+            }
+          }
         }
       }
 
       setAuthReady(true);
     });
     return () => unsub();
-  }, []);
+  }, [showToast]);
 
-  // Live user profile listener
+  // Live user profile & post-permission listeners
   useEffect(() => {
     if (!authReady || !user) return;
-    const unsub = onSnapshot(
+    const unsubProfile = onSnapshot(
       doc(db, 'users', user.uid),
       (snap) => {
         if (snap.exists()) {
@@ -245,7 +318,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       },
       (err) => handleFirestoreError(err, OperationType.GET, `users/${user.uid}`)
     );
-    return () => unsub();
+
+    const unsubAccess = onSnapshot(
+      doc(db, 'userAccess', user.uid),
+      (snap) => {
+        if (snap.exists()) {
+          setUserAccess(snap.data() as UserAccess);
+        } else {
+          setUserAccess(null);
+        }
+      },
+      (err) => handleFirestoreError(err, OperationType.GET, `userAccess/${user.uid}`)
+    );
+
+    return () => {
+      unsubProfile();
+      unsubAccess();
+    };
   }, [authReady, user]);
 
   // 2. Real-time Products listener
@@ -280,52 +369,81 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return () => unsub();
   }, [authReady, isAdmin]);
 
-  // Seed Starter Catalog (admin-only)
-  const seedStarterCatalog = useCallback(async () => {
-    if (!isAdmin && (!adminUnlocked || !adminProofToken)) {
-      throw new Error('Only administrators can seed the catalog.');
-    }
-    const batch = writeBatch(db);
-    const auditId = adminProofToken ? generateProofNonceId() : undefined;
-    if (adminProofToken && auditId) {
-      batch.set(doc(db, 'adminProofs', auditId), {
-        proof: adminProofToken,
-        createdAt: serverTimestamp(),
-      });
-    }
-    const creatorId = isAdmin && user ? user.uid : 'admin_portal';
-    for (const item of STARTER_PRODUCTS) {
-      const ref = doc(db, 'products', item.id);
-      batch.set(ref, {
-        title: item.title,
-        brand: item.brand,
-        category: item.category,
-        sku: item.sku,
-        price: item.price,
-        compareAtPrice: item.compareAtPrice,
-        stock: item.stock,
-        soldCount: 0,
-        imageUrl: item.imageUrl,
-        summary: item.summary,
-        specs: item.specs,
-        featured: item.featured,
-        status: item.status,
-        lastOrderId: 'none',
-        ...(auditId ? { auditId } : {}),
-        createdBy: creatorId,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-    }
-    try {
-      await batch.commit();
-      showToast('Starter hardware catalog published to Firestore.', 'success');
-    } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, 'products');
-    }
-  }, [user, isAdmin, adminUnlocked, adminProofToken, showToast]);
+  const verifyAdminActionPassword = useCallback(
+    async (adminPassword: string): Promise<string> => {
+      if (!adminUnlocked || !adminProofToken || !adminCredentialUsername) {
+        throw new Error('Admin session is locked. Unlock /admin first.');
+      }
+      if (!adminPassword || adminPassword.length < 4) {
+        throw new Error('Enter your admin password to confirm this change.');
+      }
+      const derived = await deriveAdminProofToken(adminCredentialUsername, adminPassword);
+      if (!timingSafeEqual(derived, adminProofToken)) {
+        throw new Error('Incorrect admin password.');
+      }
+      return derived;
+    },
+    [adminUnlocked, adminProofToken, adminCredentialUsername]
+  );
 
-  // Auto-seed once when Admin signs in and Firestore products collection is empty
+  const seedStarterCatalogInternal = useCallback(
+    async (proofTokenOverride?: string) => {
+      if (!isAdmin && !proofTokenOverride) {
+        throw new Error('Only administrators can seed the catalog.');
+      }
+      const batch = writeBatch(db);
+      const auditId = proofTokenOverride ? generateProofNonceId() : undefined;
+      if (proofTokenOverride && auditId) {
+        batch.set(doc(db, 'adminProofs', auditId), {
+          proof: proofTokenOverride,
+          createdAt: serverTimestamp(),
+        });
+      }
+      const creatorId =
+        proofTokenOverride || !isAdmin || !user ? 'admin_portal' : user.uid;
+      for (const item of STARTER_PRODUCTS) {
+        const ref = doc(db, 'products', item.id);
+        batch.set(ref, {
+          title: item.title,
+          brand: item.brand,
+          category: item.category,
+          sku: item.sku,
+          price: item.price,
+          compareAtPrice: item.compareAtPrice,
+          stock: item.stock,
+          soldCount: 0,
+          imageUrl: item.imageUrl,
+          summary: item.summary,
+          specs: item.specs,
+          featured: item.featured,
+          status: item.status,
+          lastOrderId: 'none',
+          ...(auditId ? { auditId } : {}),
+          createdBy: creatorId,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+      try {
+        await batch.commit();
+        showToast('Starter hardware catalog published to Firestore.', 'success');
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, 'products');
+      }
+    },
+    [user, isAdmin, showToast]
+  );
+
+  // Seed Starter Catalog (admin password confirmed)
+  const seedStarterCatalog = useCallback(
+    async (adminPassword: string) => {
+      const proofToken = await verifyAdminActionPassword(adminPassword);
+      await seedStarterCatalogInternal(proofToken);
+    },
+    [verifyAdminActionPassword, seedStarterCatalogInternal]
+  );
+
+  // Auto-seed once when Google Admin signs in and Firestore products collection is empty
   useEffect(() => {
     if (
       authReady &&
@@ -335,9 +453,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       !autoSeededRef.current
     ) {
       autoSeededRef.current = true;
-      void seedStarterCatalog();
+      void seedStarterCatalogInternal();
     }
-  }, [authReady, isAdmin, productsLoading, firestoreProducts.length, seedStarterCatalog]);
+  }, [
+    authReady,
+    isAdmin,
+    productsLoading,
+    firestoreProducts.length,
+    seedStarterCatalogInternal,
+  ]);
 
   // Effective catalog: live Firestore products, or preview showcase if DB is not seeded yet
   const hasFirestoreProducts = firestoreProducts.length > 0;
@@ -382,13 +506,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return () => unsub();
   }, [authReady, user, isAdmin]);
 
-  // 4. Admin-only real-time Customers listener
+  // 4. Admin-only real-time Customers & UserAccess listeners
   useEffect(() => {
     if (!authReady || !isAdmin) {
       setCustomers([]);
+      setUserAccessList([]);
       return;
     }
-    const unsub = onSnapshot(
+    const unsubUsers = onSnapshot(
       collection(db, 'users'),
       (snapshot) => {
         const list = snapshot.docs.map((d) => d.data() as UserProfile);
@@ -396,7 +521,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       },
       (err) => handleFirestoreError(err, OperationType.LIST, 'users')
     );
-    return () => unsub();
+    const unsubAccessList = onSnapshot(
+      collection(db, 'userAccess'),
+      (snapshot) => {
+        const list = snapshot.docs.map((d) => d.data() as UserAccess);
+        list.sort((a, b) => {
+          const tA = a.lastLoginAt?.toMillis?.() ?? 0;
+          const tB = b.lastLoginAt?.toMillis?.() ?? 0;
+          return tB - tA;
+        });
+        setUserAccessList(list);
+      },
+      (err) => handleFirestoreError(err, OperationType.LIST, 'userAccess')
+    );
+    return () => {
+      unsubUsers();
+      unsubAccessList();
+    };
   }, [authReady, isAdmin]);
 
   // Sync cart with live product stock & prices
@@ -719,12 +860,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [user, showToast]
   );
 
-  // Admin Product CRUD
+  // Product CRUD (Admin with required password OR Permitted Storefront Editor)
   const saveProduct = useCallback(
-    async (input: ProductInput, existingId?: string) => {
-      if (!isAdmin && (!adminUnlocked || !adminProofToken)) {
-        throw new Error('Administrator authorization required.');
-      }
+    async (input: ProductInput, existingId?: string, adminPassword?: string) => {
       const errMsg = validateProductInput(input);
       if (errMsg) throw new Error(errMsg);
 
@@ -749,11 +887,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         status: input.status,
       };
 
+      const isPermittedUserAction =
+        adminPassword === undefined &&
+        Boolean(user && user.emailVerified) &&
+        (existingId ? Boolean(userAccess?.canEditPost) : Boolean(userAccess?.canAddPost));
+
+      let proofToken: string | null = null;
+      if (!isPermittedUserAction) {
+        proofToken = await verifyAdminActionPassword(adminPassword || '');
+      }
+
       const batch = writeBatch(db);
-      const auditId = adminProofToken ? generateProofNonceId() : undefined;
-      if (adminProofToken && auditId) {
+      const auditId = proofToken ? generateProofNonceId() : undefined;
+      if (proofToken && auditId) {
         batch.set(doc(db, 'adminProofs', auditId), {
-          proof: adminProofToken,
+          proof: proofToken,
           createdAt: serverTimestamp(),
         });
       }
@@ -784,7 +932,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           ...(auditId ? { auditId } : {}),
           soldCount: 0,
           lastOrderId: 'none',
-          createdBy: isAdmin && user ? user.uid : 'admin_portal',
+          createdBy: isPermittedUserAction && user ? user.uid : 'admin_portal',
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });
@@ -796,24 +944,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
       }
     },
-    [user, isAdmin, adminUnlocked, adminProofToken, showToast]
+    [user, userAccess, verifyAdminActionPassword, showToast]
   );
 
   const adjustProductStock = useCallback(
-    async (productId: string, newStock: number) => {
-      if (!isAdmin && (!adminUnlocked || !adminProofToken)) return;
+    async (productId: string, newStock: number, adminPassword: string) => {
+      const proofToken = await verifyAdminActionPassword(adminPassword);
       const clamped = Math.max(0, Math.min(100000, Math.trunc(newStock)));
       const batch = writeBatch(db);
-      const auditId = adminProofToken ? generateProofNonceId() : undefined;
-      if (adminProofToken && auditId) {
-        batch.set(doc(db, 'adminProofs', auditId), {
-          proof: adminProofToken,
-          createdAt: serverTimestamp(),
-        });
-      }
+      const auditId = generateProofNonceId();
+      batch.set(doc(db, 'adminProofs', auditId), {
+        proof: proofToken,
+        createdAt: serverTimestamp(),
+      });
       batch.update(doc(db, 'products', productId), {
         stock: clamped,
-        ...(auditId ? { auditId } : {}),
+        auditId,
         updatedAt: serverTimestamp(),
       });
       try {
@@ -823,51 +969,50 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         handleFirestoreError(err, OperationType.UPDATE, `products/${productId}`);
       }
     },
-    [isAdmin, adminUnlocked, adminProofToken, showToast]
+    [verifyAdminActionPassword, showToast]
   );
 
   const deleteProduct = useCallback(
-    async (productId: string) => {
-      if (!isAdmin && (!adminUnlocked || !adminProofToken)) return;
+    async (productId: string, adminPassword: string) => {
+      const proofToken = await verifyAdminActionPassword(adminPassword);
+      const batch = writeBatch(db);
+      const auditId = generateProofNonceId();
+      batch.set(doc(db, 'adminProofs', auditId), {
+        proof: proofToken,
+        createdAt: serverTimestamp(),
+      });
+      batch.update(doc(db, 'products', productId), {
+        status: 'archived',
+        auditId,
+        updatedAt: serverTimestamp(),
+      });
       try {
-        if (isAdmin) {
-          await deleteDoc(doc(db, 'products', productId));
-        } else if (adminProofToken) {
-          const batch = writeBatch(db);
-          const auditId = generateProofNonceId();
-          batch.set(doc(db, 'adminProofs', auditId), {
-            proof: adminProofToken,
-            createdAt: serverTimestamp(),
-          });
-          batch.update(doc(db, 'products', productId), {
-            status: 'archived',
-            auditId,
-            updatedAt: serverTimestamp(),
-          });
-          await batch.commit();
-        }
-        showToast('Product removed from catalog.', 'info');
+        await batch.commit();
+        showToast('Product deleted from catalog.', 'info');
       } catch (err) {
         handleFirestoreError(err, OperationType.DELETE, `products/${productId}`);
       }
     },
-    [isAdmin, adminUnlocked, adminProofToken, showToast]
+    [verifyAdminActionPassword, showToast]
   );
 
   const updateOrderStatus = useCallback(
-    async (orderId: string, status: OrderStatus, notes?: string) => {
-      if (!isAdmin && (!adminUnlocked || !adminProofToken)) return;
+    async (
+      orderId: string,
+      status: OrderStatus,
+      adminPassword: string,
+      notes?: string
+    ) => {
+      const proofToken = await verifyAdminActionPassword(adminPassword);
       const batch = writeBatch(db);
-      const auditId = adminProofToken ? generateProofNonceId() : undefined;
-      if (adminProofToken && auditId) {
-        batch.set(doc(db, 'adminProofs', auditId), {
-          proof: adminProofToken,
-          createdAt: serverTimestamp(),
-        });
-      }
+      const auditId = generateProofNonceId();
+      batch.set(doc(db, 'adminProofs', auditId), {
+        proof: proofToken,
+        createdAt: serverTimestamp(),
+      });
       const patch: Record<string, unknown> = {
         status,
-        ...(auditId ? { auditId } : {}),
+        auditId,
         updatedAt: serverTimestamp(),
       };
       if (typeof notes === 'string') {
@@ -881,7 +1026,64 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         handleFirestoreError(err, OperationType.UPDATE, `orders/${orderId}`);
       }
     },
-    [isAdmin, adminUnlocked, adminProofToken, showToast]
+    [verifyAdminActionPassword, showToast]
+  );
+
+  const updateUserPostPermission = useCallback(
+    async (
+      targetUser: {
+        uid: string;
+        email: string;
+        displayName: string;
+        photoURL?: string;
+      },
+      patch: { canAddPost: boolean; canEditPost: boolean },
+      adminPassword: string
+    ) => {
+      if (!isValidDocumentId(targetUser.uid)) {
+        throw new Error('Invalid user record identifier.');
+      }
+      const proofToken = await verifyAdminActionPassword(adminPassword);
+      const accessRef = doc(db, 'userAccess', targetUser.uid);
+      const batch = writeBatch(db);
+      const auditId = generateProofNonceId();
+      batch.set(doc(db, 'adminProofs', auditId), {
+        proof: proofToken,
+        createdAt: serverTimestamp(),
+      });
+
+      const alreadyTracked = userAccessList.some((u) => u.uid === targetUser.uid);
+      if (alreadyTracked) {
+        batch.update(accessRef, {
+          canAddPost: Boolean(patch.canAddPost),
+          canEditPost: Boolean(patch.canEditPost),
+          auditId,
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        batch.set(accessRef, {
+          uid: targetUser.uid,
+          email: sanitizeText(targetUser.email, 160),
+          displayName: sanitizeText(targetUser.displayName || 'Customer', 120) || 'Customer',
+          photoURL: sanitizeText(targetUser.photoURL || '', 1000),
+          loginCount: 1,
+          canAddPost: Boolean(patch.canAddPost),
+          canEditPost: Boolean(patch.canEditPost),
+          auditId,
+          lastLoginAt: serverTimestamp(),
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+
+      try {
+        await batch.commit();
+        showToast(`Updated permissions for ${targetUser.displayName || targetUser.email}.`, 'success');
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, `userAccess/${targetUser.uid}`);
+      }
+    },
+    [userAccessList, verifyAdminActionPassword, showToast]
   );
 
   const unlockAdminPortal = useCallback(
@@ -968,6 +1170,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const value: StoreContextValue = {
     user,
     userProfile,
+    userAccess,
+    userAccessList,
     authReady,
     isAdmin,
     products,
@@ -996,6 +1200,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     adjustProductStock,
     deleteProduct,
     updateOrderStatus,
+    updateUserPostPermission,
+    verifyAdminActionPassword,
     adminUnlocked,
     adminCredentialUsername,
     unlockAdminPortal,

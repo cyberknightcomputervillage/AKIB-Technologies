@@ -7,6 +7,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { Header } from './components/Header';
 import { OrdersView } from './components/OrdersView';
 import { ProductDetailModal } from './components/ProductDetailModal';
+import { ProductEditorModal } from './components/ProductEditorModal';
 import { SeoManager } from './components/SeoManager';
 import { Storefront } from './components/Storefront';
 import { StoreProvider, useStore } from './context/StoreContext';
@@ -20,12 +21,14 @@ function resolveViewFromPath(pathname: string): AppView {
 }
 
 function AppShell() {
-  const { products, isAdmin, adminUnlocked, toast, clearToast } = useStore();
+  const { products, adminUnlocked, toast, clearToast } = useStore();
   const [activeView, setActiveView] = useState<AppView>(() =>
     resolveViewFromPath(window.location.pathname)
   );
   const [selectedCategory, setSelectedCategory] = useState<ProductCategory | 'All'>('All');
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [editorProduct, setEditorProduct] = useState<Product | null>(null);
   const [cartOpen, setCartOpen] = useState(false);
 
   // Synchronize SPA navigation with browser URL & history (Back/Forward)
@@ -46,10 +49,19 @@ function AppShell() {
     setActiveView(view === 'admin' ? 'store' : view);
   }, []);
 
+  const handleOpenProductEditor = useCallback((product: Product | null) => {
+    setEditorProduct(product);
+    setEditorOpen(true);
+  }, []);
+
+  const liveSelectedProduct = selectedProduct
+    ? products.find((p) => p.id === selectedProduct.id) ?? selectedProduct
+    : null;
+
   return (
     <div className="min-h-screen bg-[#F2F4F8] text-slate-900 flex flex-col">
       <SeoManager
-        selectedProduct={selectedProduct}
+        selectedProduct={liveSelectedProduct}
         activeView={activeView}
         products={products}
       />
@@ -68,6 +80,7 @@ function AppShell() {
             onSelectCategory={setSelectedCategory}
             onSelectProduct={setSelectedProduct}
             onNavigateOrders={() => navigateTo('orders')}
+            onOpenProductEditor={handleOpenProductEditor}
           />
         )}
 
@@ -84,9 +97,19 @@ function AppShell() {
       </div>
 
       <ProductDetailModal
-        product={selectedProduct}
+        product={liveSelectedProduct}
         onClose={() => setSelectedProduct(null)}
         onOpenCart={() => setCartOpen(true)}
+        onEditProduct={handleOpenProductEditor}
+      />
+
+      <ProductEditorModal
+        open={editorOpen}
+        product={editorProduct}
+        onClose={() => {
+          setEditorOpen(false);
+          setEditorProduct(null);
+        }}
       />
 
       <CartDrawer

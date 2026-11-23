@@ -6,7 +6,9 @@ import {
   Headphones,
   Laptop,
   Monitor,
+  Pencil,
   PhoneCall,
+  Plus,
   Search,
   ShieldCheck,
   ShoppingBag,
@@ -26,6 +28,7 @@ interface StorefrontProps {
   onSelectCategory: (cat: ProductCategory | 'All') => void;
   onSelectProduct: (product: Product) => void;
   onNavigateOrders: () => void;
+  onOpenProductEditor: (product: Product | null) => void;
 }
 
 type SortOption = 'featured' | 'price_asc' | 'price_desc' | 'in_stock';
@@ -45,11 +48,13 @@ export function Storefront({
   onSelectCategory,
   onSelectProduct,
   onNavigateOrders,
+  onOpenProductEditor,
 }: StorefrontProps) {
   const {
     products,
     productsLoading,
     hasFirestoreProducts,
+    userAccess,
     addToCart,
   } = useStore();
 
@@ -318,7 +323,17 @@ export function Storefront({
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            {userAccess?.canAddPost && (
+              <button
+                type="button"
+                onClick={() => onOpenProductEditor(null)}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded bg-[#EF4A23] text-white text-xs sm:text-sm font-semibold hover:bg-[#D93E18] transition-colors cursor-pointer min-h-[40px]"
+              >
+                <Plus className="w-4 h-4" />
+                Add Product Post
+              </button>
+            )}
             {selectedCategory !== 'All' && (
               <button
                 type="button"
@@ -491,6 +506,17 @@ export function Storefront({
                         >
                           Specs
                         </button>
+                        {userAccess?.canEditPost && !product.isPreviewOnly && (
+                          <button
+                            type="button"
+                            onClick={() => onOpenProductEditor(product)}
+                            aria-label={`Edit ${product.title}`}
+                            className="inline-flex items-center gap-1 px-2.5 py-2 rounded border border-blue-200 bg-blue-50 text-blue-800 text-xs font-semibold hover:bg-blue-100 transition-colors cursor-pointer min-h-[40px]"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                            Edit
+                          </button>
+                        )}
                       </div>
                     </div>
                   </div>

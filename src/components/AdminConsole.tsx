@@ -15,13 +15,19 @@ import {
   Plus,
   PlusCircle,
   Search,
+  ShieldCheck,
   ShoppingCart,
   Trash2,
   Users,
   X,
 } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
-import { formatCurrency, isValidImageUrl, type ProductInput } from '../lib/validation';
+import {
+  formatCurrency,
+  isValidImageUrl,
+  validateProductInput,
+  type ProductInput,
+} from '../lib/validation';
 import {
   PRODUCT_CATEGORIES,
   type AdminTab,
@@ -35,6 +41,14 @@ import { ProductImage } from './ProductImage';
 
 interface AdminConsoleProps {
   onBackToStore: () => void;
+}
+
+interface PendingAdminAction {
+  title: string;
+  description: string;
+  confirmLabel: string;
+  danger?: boolean;
+  execute: (adminPassword: string) => Promise<void>;
 }
 
 const EMPTY_PRODUCT_FORM: ProductInput = {
@@ -67,6 +81,7 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
     hasFirestoreProducts,
     orders,
     customers,
+    userAccessList,
     adminCredentialUsername,
     signInWithGoogle,
     seedStarterCatalog,
@@ -74,6 +89,7 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
     adjustProductStock,
     deleteProduct,
     updateOrderStatus,
+    updateUserPostPermission,
     lockAdminPortal,
     updateAdminCredentials,
   } = useStore();
@@ -82,12 +98,12 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
   const [productSearch, setProductSearch] = useState('');
   const [orderFilter, setOrderFilter] = useState<OrderStatus | 'all'>('all');
   const [orderSearch, setOrderSearch] = useState('');
+  const [userSearch, setUserSearch] = useState('');
 
   // Inline Quick Post Form State ('post' tab)
   const [postForm, setPostForm] = useState<ProductInput>(createFreshPostForm);
   const [postError, setPostError] = useState<string | null>(null);
   const [postSuccess, setPostSuccess] = useState<string | null>(null);
-  const [postingProduct, setPostingProduct] = useState(false);
 
   // Admin Login & Password Update State ('security' tab)
   const [currentPassword, setCurrentPassword] = useState('');
@@ -100,78 +116,151 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
   const [credError, setCredError] = useState<string | null>(null);
   const [credSuccess, setCredSuccess] = useState<string | null>(null);
 
-  // Product Edit Modal / Drawer State ('products' tab)
+  // Product Edit Modal State ('products' & 'post' tabs)
   const [formOpen, setFormOpen] = useState(false);
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
   const [formState, setFormState] = useState<ProductInput>(EMPTY_PRODUCT_FORM);
   const [formError, setFormError] = useState<string | null>(null);
-  const [savingProduct, setSavingProduct] = useState(false);
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   // Order Inspection State
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [orderNoteDraft, setOrderNoteDraft] = useState('');
 
-  // Analytics Calculations
+  // Global Admin Password Confirmation Modal State (required for EVERY Admin Panel change)
+  const [pendingAction, setPendingAction] = useState<PendingAdminAction | null>(null);
+  const [confirmActionPassword, setConfirmActionPassword] = useState('');
+  const [showActionPassword, setShowActionPassword] = useState(false);
+  const [confirmActionError, setConfirmActionError] = useState<string | null>(null);
+  const [confirmActionBusy, setConfirmActionBusy] = useState(false);
+
+  const requestPasswordConfirm = (action: PendingAdminAction) => {
+    setConfirmActionPassword('');
+    setShowActionPassword(false);
+    setConfirmActionError(null);
+    setConfirmActionBusy(false);
+    setPendingAction(action);
+  };
+
+  const handleConfirmActionSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pendingAction) return;
+    setConfirmActionError(null);
+    setConfirmActionBusy(true);
+    try {
+      await pendingAction.execute(confirmActionPassword);
+      setPendingAction(null);
+      setConfirmActionPassword('');
+    } catch (err) {
+      setConfirmActionError(
+        err instanceof Error ? err.message : 'Admin password verification failed.'
+      );
+    } finally {
+      setConfirmActionBusy(false);
+    }
+  };
+
+  // Analytics & Unified Tracked Users Calculations
   const analytics = useMemo(() => {
     const validOrders = orders.filter((o) => o.status !== 'cancelled');
     const totalRevenue = validOrders.reduce((sum, o) => sum + (o.totalAmount || 0), 0);
     const totalOrdersCount = orders.length;
     const avgOrderValue = validOrders.length > 0 ? totalRevenue / validOrders.length : 0;
 
-    // Customer aggregation across orders + users
-    const customerMap = new Map<
+    const userMap = new Map<
       string,
       {
         uid: string;
         name: string;
         email: string;
+        photoURL: string;
         city: string;
         phone: string;
+        loginCount: number;
+        lastLoginMs: number;
+        canAddPost: boolean;
+        canEditPost: boolean;
         orderCount: number;
         totalSpent: number;
-        lastOrderMs: number;
+        lastActivityMs: number;
       }
     >();
 
-    for (const c of customers) {
-      customerMap.set(c.uid, {
-        uid: c.uid,
-        name: c.displayName || 'Customer',
-        email: c.email || '',
-        city: c.city || '—',
-        phone: c.phone || '—',
+    for (const access of userAccessList) {
+      const loginMs = access.lastLoginAt?.toMillis?.() ?? 0;
+      userMap.set(access.uid, {
+        uid: access.uid,
+        name: access.displayName || 'Customer',
+        email: access.email || '',
+        photoURL: access.photoURL || '',
+        city: '—',
+        phone: '—',
+        loginCount: access.loginCount || 1,
+        lastLoginMs: loginMs,
+        canAddPost: Boolean(access.canAddPost),
+        canEditPost: Boolean(access.canEditPost),
         orderCount: 0,
         totalSpent: 0,
-        lastOrderMs: c.updatedAt?.toMillis?.() ?? 0,
+        lastActivityMs: loginMs,
       });
     }
 
+    for (const c of customers) {
+      const existing = userMap.get(c.uid);
+      const updatedMs = c.updatedAt?.toMillis?.() ?? 0;
+      if (existing) {
+        if (c.displayName) existing.name = c.displayName;
+        if (c.photoURL && !existing.photoURL) existing.photoURL = c.photoURL;
+        if (c.city) existing.city = c.city;
+        if (c.phone) existing.phone = c.phone;
+        existing.lastActivityMs = Math.max(existing.lastActivityMs, updatedMs);
+      } else {
+        userMap.set(c.uid, {
+          uid: c.uid,
+          name: c.displayName || 'Customer',
+          email: c.email || '',
+          photoURL: c.photoURL || '',
+          city: c.city || '—',
+          phone: c.phone || '—',
+          loginCount: 1,
+          lastLoginMs: updatedMs,
+          canAddPost: false,
+          canEditPost: false,
+          orderCount: 0,
+          totalSpent: 0,
+          lastActivityMs: updatedMs,
+        });
+      }
+    }
+
     for (const o of orders) {
-      const existing = customerMap.get(o.userId);
+      const existing = userMap.get(o.userId);
       const orderMs = o.createdAt?.toMillis?.() ?? Date.now();
       const spend = o.status !== 'cancelled' ? o.totalAmount : 0;
       if (existing) {
         existing.orderCount += 1;
         existing.totalSpent += spend;
-        existing.lastOrderMs = Math.max(existing.lastOrderMs, orderMs);
+        existing.lastActivityMs = Math.max(existing.lastActivityMs, orderMs);
         if (existing.city === '—' && o.city) existing.city = o.city;
         if (existing.phone === '—' && o.customerPhone) existing.phone = o.customerPhone;
       } else {
-        customerMap.set(o.userId, {
+        userMap.set(o.userId, {
           uid: o.userId,
           name: o.customerName,
           email: o.customerEmail,
+          photoURL: '',
           city: o.city || '—',
           phone: o.customerPhone || '—',
+          loginCount: 1,
+          lastLoginMs: orderMs,
+          canAddPost: false,
+          canEditPost: false,
           orderCount: 1,
           totalSpent: spend,
-          lastOrderMs: orderMs,
+          lastActivityMs: orderMs,
         });
       }
     }
 
-    // Category Revenue Breakdown
     const categoryStats = new Map<string, { revenue: number; units: number }>();
     for (const cat of PRODUCT_CATEGORIES) {
       categoryStats.set(cat, { revenue: 0, units: 0 });
@@ -201,9 +290,13 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
       .sort((a, b) => b.soldCount - a.soldCount || b.stock - a.stock)
       .slice(0, 5);
 
-    const customerList = Array.from(customerMap.values()).sort(
-      (a, b) => b.totalSpent - a.totalSpent || b.orderCount - a.orderCount
+    const trackedUsers = Array.from(userMap.values()).sort(
+      (a, b) => b.lastActivityMs - a.lastActivityMs || b.loginCount - a.loginCount
     );
+    const totalLogins = trackedUsers.reduce((sum, u) => sum + u.loginCount, 0);
+    const permittedEditorsCount = trackedUsers.filter(
+      (u) => u.canAddPost || u.canEditPost
+    ).length;
 
     const pendingCount = orders.filter((o) => o.status === 'pending').length;
 
@@ -211,17 +304,19 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
       totalRevenue,
       totalOrdersCount,
       avgOrderValue,
-      activeCustomersCount: customerMap.size,
+      activeCustomersCount: userMap.size,
       categoryList,
       maxCatRevenue,
       lowStockProducts,
       outOfStockProducts,
       totalInventoryUnits,
       topProducts,
-      customerList,
+      trackedUsers,
+      totalLogins,
+      permittedEditorsCount,
       pendingCount,
     };
-  }, [orders, customers, products, hasFirestoreProducts]);
+  }, [orders, customers, userAccessList, products, hasFirestoreProducts]);
 
   const filteredProducts = useMemo(() => {
     const list = hasFirestoreProducts ? products : [];
@@ -248,6 +343,17 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
       );
     });
   }, [orders, orderFilter, orderSearch]);
+
+  const filteredUsers = useMemo(() => {
+    const q = userSearch.trim().toLowerCase();
+    if (!q) return analytics.trackedUsers;
+    return analytics.trackedUsers.filter(
+      (u) =>
+        u.name.toLowerCase().includes(q) ||
+        u.email.toLowerCase().includes(q) ||
+        u.city.toLowerCase().includes(q)
+    );
+  }, [analytics.trackedUsers, userSearch]);
 
   if (!adminUnlocked) {
     return (
@@ -293,24 +399,32 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
     }));
   };
 
-  const handleInlinePostSubmit = async (e: React.FormEvent) => {
+  const handleInlinePostSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setPostError(null);
     setPostSuccess(null);
-    setPostingProduct(true);
-    try {
-      const cleanedSpecs = postForm.specs.filter(
-        (s) => s.label.trim().length > 0 && s.value.trim().length > 0
-      );
-      await saveProduct({ ...postForm, specs: cleanedSpecs });
-      const publishedTitle = postForm.title.trim();
-      setPostForm(createFreshPostForm());
-      setPostSuccess(`"${publishedTitle}" is now live on AKIB Technologies.`);
-    } catch (err) {
-      setPostError(err instanceof Error ? err.message : 'Unable to publish product.');
-    } finally {
-      setPostingProduct(false);
+
+    const cleanedSpecs = postForm.specs.filter(
+      (s) => s.label.trim().length > 0 && s.value.trim().length > 0
+    );
+    const payload: ProductInput = { ...postForm, specs: cleanedSpecs };
+    const validationErr = validateProductInput(payload);
+    if (validationErr) {
+      setPostError(validationErr);
+      return;
     }
+
+    requestPasswordConfirm({
+      title: 'Confirm New Product Post',
+      description: `Enter your admin password to publish "${payload.title.trim()}" at ${formatCurrency(payload.price)}.`,
+      confirmLabel: 'Confirm & Publish',
+      execute: async (pw) => {
+        await saveProduct(payload, undefined, pw);
+        const publishedTitle = payload.title.trim();
+        setPostForm(createFreshPostForm());
+        setPostSuccess(`"${publishedTitle}" is now live on AKIB Technologies.`);
+      },
+    });
   };
 
   const handleCredentialsSubmit = async (e: React.FormEvent) => {
@@ -385,33 +499,79 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
     }));
   };
 
-  const handleSaveProductSubmit = async (e: React.FormEvent) => {
+  const handleSaveProductSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setFormError(null);
-    setSavingProduct(true);
-    try {
-      const cleanedSpecs = formState.specs.filter(
-        (s) => s.label.trim().length > 0 && s.value.trim().length > 0
-      );
-      await saveProduct(
-        { ...formState, specs: cleanedSpecs },
-        editingProductId || undefined
-      );
-      setFormOpen(false);
-    } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'Unable to save product.');
-    } finally {
-      setSavingProduct(false);
+    const cleanedSpecs = formState.specs.filter(
+      (s) => s.label.trim().length > 0 && s.value.trim().length > 0
+    );
+    const payload: ProductInput = { ...formState, specs: cleanedSpecs };
+    const validationErr = validateProductInput(payload);
+    if (validationErr) {
+      setFormError(validationErr);
+      return;
     }
+
+    requestPasswordConfirm({
+      title: editingProductId ? 'Confirm Product Changes' : 'Confirm Product Publish',
+      description: `Enter your admin password to save changes for "${payload.title.trim()}".`,
+      confirmLabel: editingProductId ? 'Confirm & Save Changes' : 'Confirm & Publish',
+      execute: async (pw) => {
+        await saveProduct(payload, editingProductId || undefined, pw);
+        setFormOpen(false);
+      },
+    });
   };
 
-  const navTabs: { id: AdminTab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
+  const requestDeleteProduct = (product: Product) => {
+    requestPasswordConfirm({
+      title: 'Confirm Delete Product',
+      description: `Enter your admin password to delete "${product.title}" (${product.sku}) from AKIB Technologies.`,
+      confirmLabel: 'Confirm & Delete',
+      danger: true,
+      execute: async (pw) => {
+        await deleteProduct(product.id, pw);
+      },
+    });
+  };
+
+  const requestStockChange = (product: Product, nextStock: number) => {
+    const clamped = Math.max(0, nextStock);
+    requestPasswordConfirm({
+      title: 'Confirm Stock Adjustment',
+      description: `Update live stock for "${product.title}" from ${product.stock} to ${clamped} units.`,
+      confirmLabel: 'Confirm Stock Update',
+      execute: async (pw) => {
+        await adjustProductStock(product.id, clamped, pw);
+      },
+    });
+  };
+
+  const requestSeedCatalog = () => {
+    requestPasswordConfirm({
+      title: hasFirestoreProducts
+        ? 'Confirm Starter Catalog Sync'
+        : 'Confirm Starter Catalog Publish',
+      description:
+        'Enter your admin password to publish the BDT starter hardware catalog to Firestore.',
+      confirmLabel: 'Confirm & Publish Catalog',
+      execute: async (pw) => {
+        await seedStarterCatalog(pw);
+      },
+    });
+  };
+
+  const navTabs: {
+    id: AdminTab;
+    label: string;
+    icon: React.ComponentType<{ className?: string }>;
+  }[] = [
     { id: 'post', label: 'Post Product', icon: PlusCircle },
-    { id: 'products', label: 'Products', icon: Package },
+    { id: 'products', label: 'Products (Edit / Delete)', icon: Package },
     { id: 'orders', label: 'Orders', icon: ShoppingCart },
+    { id: 'users', label: 'Users & Permissions', icon: Users },
     { id: 'analytics', label: 'Analytics', icon: BarChart3 },
-    { id: 'customers', label: 'Customers', icon: Users },
-    { id: 'security', label: 'Login & Password', icon: KeyRound },
+    { id: 'security', label: 'Change Password', icon: KeyRound },
   ];
 
   return (
@@ -430,12 +590,16 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
           <h1 className="font-display text-2xl sm:text-3xl font-bold text-slate-900">
             AKIB Operations Console
           </h1>
+          <p className="text-xs text-slate-500 mt-1 flex items-center gap-1.5">
+            <ShieldCheck className="w-3.5 h-3.5 text-[#3749BB]" />
+            Admin password confirmation is required before every database change.
+          </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
           <button
             type="button"
-            onClick={() => void seedStarterCatalog()}
+            onClick={requestSeedCatalog}
             className="px-4 py-2.5 rounded border border-slate-200 bg-white text-slate-800 text-xs sm:text-sm font-medium hover:bg-slate-50 cursor-pointer min-h-[42px]"
           >
             {hasFirestoreProducts ? 'Sync BDT Starter Catalog' : 'Seed BDT Starter Catalog'}
@@ -450,6 +614,14 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
           </button>
           <button
             type="button"
+            onClick={() => setActiveTab('security')}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded border border-slate-200 bg-white text-slate-700 text-xs sm:text-sm font-medium hover:bg-slate-50 transition-colors cursor-pointer min-h-[42px]"
+          >
+            <KeyRound className="w-4 h-4 text-[#3749BB]" />
+            Change Password
+          </button>
+          <button
+            type="button"
             onClick={lockAdminPortal}
             className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded border border-slate-300 bg-white text-slate-700 text-xs sm:text-sm font-medium hover:bg-slate-100 transition-colors cursor-pointer min-h-[42px]"
           >
@@ -459,7 +631,7 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
         </div>
       </div>
 
-      {/* Responsive Workspace Shell: 240px Sidebar on lg+, Tab bar on mobile */}
+      {/* Responsive Workspace Shell */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
         <aside className="lg:col-span-3">
           <nav
@@ -493,6 +665,15 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
                       {analytics.pendingCount}
                     </span>
                   )}
+                  {tab.id === 'users' && analytics.trackedUsers.length > 0 && (
+                    <span
+                      className={`font-mono text-xs tabular-nums ${
+                        active ? 'text-blue-300' : 'text-slate-500'
+                      }`}
+                    >
+                      {analytics.trackedUsers.length}
+                    </span>
+                  )}
                 </button>
               );
             })}
@@ -501,373 +682,438 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
 
         {/* Main Viewport */}
         <div className="lg:col-span-9 space-y-6 min-w-0">
-          {/* TAB 0: SIMPLE INLINE POST PRODUCT */}
+          {/* TAB 0: POST PRODUCT + QUICK MANAGE */}
           {activeTab === 'post' && (
-            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-              <div className="px-6 py-4 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <div>
-                  <h2 className="font-display text-lg font-semibold text-slate-900">
-                    Post a Product to AKIB Technologies
-                  </h2>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    Paste any external image link, set your BDT price and stock, and publish directly to the live store.
-                  </p>
+            <div className="space-y-6">
+              <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                <div className="px-6 py-4 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <h2 className="font-display text-lg font-semibold text-slate-900">
+                      Post a Product to AKIB Technologies
+                    </h2>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Paste any external image link, set your BDT price and stock, then confirm with your admin password.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPostForm(createFreshPostForm());
+                      setPostError(null);
+                      setPostSuccess(null);
+                    }}
+                    className="text-xs font-medium text-slate-500 hover:text-slate-900 underline self-start sm:self-center cursor-pointer"
+                  >
+                    Clear Form
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPostForm(createFreshPostForm());
-                    setPostError(null);
-                    setPostSuccess(null);
-                  }}
-                  className="text-xs font-medium text-slate-500 hover:text-slate-900 underline self-start sm:self-center cursor-pointer"
-                >
-                  Clear Form
-                </button>
+
+                <form onSubmit={handleInlinePostSubmit} className="p-6 space-y-5">
+                  {postSuccess && (
+                    <div className="p-3.5 rounded-lg bg-emerald-50 border border-emerald-200 flex items-center justify-between gap-3 text-xs sm:text-sm text-emerald-800">
+                      <span className="flex items-center gap-2 font-medium">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
+                        {postSuccess}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab('products')}
+                        className="text-xs font-semibold text-emerald-900 underline shrink-0 cursor-pointer"
+                      >
+                        Manage Products
+                      </button>
+                    </div>
+                  )}
+
+                  {postError && (
+                    <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700">
+                      {postError}
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 items-start p-4 rounded-xl bg-slate-50 border border-slate-200">
+                    <div className="sm:col-span-4 aspect-[4/3] rounded-lg overflow-hidden border border-slate-200 bg-white">
+                      <ProductImage
+                        src={postForm.imageUrl}
+                        alt={postForm.title || 'New product preview'}
+                      />
+                    </div>
+                    <div className="sm:col-span-8 space-y-2">
+                      <label
+                        htmlFor="post-image-url"
+                        className="flex items-center gap-1.5 text-xs font-semibold text-slate-800"
+                      >
+                        <LinkIcon className="w-3.5 h-3.5 text-[#3749BB]" />
+                        Product Image Link (URL)
+                      </label>
+                      <input
+                        id="post-image-url"
+                        type="url"
+                        required
+                        maxLength={1000}
+                        value={postForm.imageUrl}
+                        onChange={(e) =>
+                          setPostForm((prev) => ({ ...prev, imageUrl: e.target.value }))
+                        }
+                        placeholder="https://example.com/images/laptop-or-gpu.jpg"
+                        className="w-full px-3 py-2.5 rounded-lg border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
+                      />
+                      <div className="flex items-center justify-between text-xs text-slate-500">
+                        <span>Paste any direct HTTPS or HTTP image URL.</span>
+                        {postForm.imageUrl && isValidImageUrl(postForm.imageUrl) && (
+                          <span className="inline-flex items-center gap-1 text-emerald-700 font-medium">
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            Valid Link
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="sm:col-span-2">
+                      <label
+                        htmlFor="post-title"
+                        className="block text-xs font-medium text-slate-700 mb-1"
+                      >
+                        Product Title
+                      </label>
+                      <input
+                        id="post-title"
+                        type="text"
+                        required
+                        maxLength={160}
+                        value={postForm.title}
+                        onChange={(e) =>
+                          setPostForm((prev) => ({ ...prev, title: e.target.value }))
+                        }
+                        placeholder="e.g. Lenovo IdeaPad Slim 5 Core i5 13th Gen 16GB RAM"
+                        className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
+                      />
+                    </div>
+
+                    <div>
+                      <label
+                        htmlFor="post-brand"
+                        className="block text-xs font-medium text-slate-700 mb-1"
+                      >
+                        Brand
+                      </label>
+                      <input
+                        id="post-brand"
+                        type="text"
+                        required
+                        maxLength={60}
+                        value={postForm.brand}
+                        onChange={(e) =>
+                          setPostForm((prev) => ({ ...prev, brand: e.target.value }))
+                        }
+                        placeholder="e.g. ASUS, MSI, Lenovo, AMD"
+                        className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
+                      />
+                    </div>
+
+                    <div>
+                      <label
+                        htmlFor="post-category"
+                        className="block text-xs font-medium text-slate-700 mb-1"
+                      >
+                        Category
+                      </label>
+                      <select
+                        id="post-category"
+                        value={postForm.category}
+                        onChange={(e) =>
+                          setPostForm((prev) => ({
+                            ...prev,
+                            category: e.target.value as ProductCategory,
+                          }))
+                        }
+                        className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
+                      >
+                        {PRODUCT_CATEGORIES.map((cat) => (
+                          <option key={cat} value={cat}>
+                            {cat}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label
+                        htmlFor="post-price"
+                        className="block text-xs font-medium text-slate-700 mb-1"
+                      >
+                        Special / Cash Price (BDT ৳)
+                      </label>
+                      <input
+                        id="post-price"
+                        type="number"
+                        required
+                        min={1}
+                        step="1"
+                        value={postForm.price || ''}
+                        onChange={(e) =>
+                          setPostForm((prev) => ({
+                            ...prev,
+                            price: Number(e.target.value),
+                          }))
+                        }
+                        placeholder="85000"
+                        className="w-full px-3 py-2.5 rounded-lg border border-slate-200 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
+                      />
+                    </div>
+
+                    <div>
+                      <label
+                        htmlFor="post-compare-price"
+                        className="block text-xs font-medium text-slate-700 mb-1"
+                      >
+                        Regular Price (BDT ৳, Optional)
+                      </label>
+                      <input
+                        id="post-compare-price"
+                        type="number"
+                        min={0}
+                        step="1"
+                        value={postForm.compareAtPrice || ''}
+                        onChange={(e) =>
+                          setPostForm((prev) => ({
+                            ...prev,
+                            compareAtPrice: Number(e.target.value || 0),
+                          }))
+                        }
+                        placeholder="92000"
+                        className="w-full px-3 py-2.5 rounded-lg border border-slate-200 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
+                      />
+                    </div>
+
+                    <div>
+                      <label
+                        htmlFor="post-stock"
+                        className="block text-xs font-medium text-slate-700 mb-1"
+                      >
+                        Stock Quantity
+                      </label>
+                      <input
+                        id="post-stock"
+                        type="number"
+                        required
+                        min={0}
+                        max={100000}
+                        value={postForm.stock}
+                        onChange={(e) =>
+                          setPostForm((prev) => ({
+                            ...prev,
+                            stock: Number(e.target.value),
+                          }))
+                        }
+                        className="w-full px-3 py-2.5 rounded-lg border border-slate-200 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
+                      />
+                    </div>
+
+                    <div>
+                      <label
+                        htmlFor="post-sku"
+                        className="block text-xs font-medium text-slate-700 mb-1"
+                      >
+                        SKU Code
+                      </label>
+                      <input
+                        id="post-sku"
+                        type="text"
+                        required
+                        maxLength={48}
+                        value={postForm.sku}
+                        onChange={(e) =>
+                          setPostForm((prev) => ({ ...prev, sku: e.target.value }))
+                        }
+                        placeholder="AKB-LTP-001"
+                        className="w-full px-3 py-2.5 rounded-lg border border-slate-200 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="post-summary"
+                      className="block text-xs font-medium text-slate-700 mb-1"
+                    >
+                      Short Description & Key Highlights
+                    </label>
+                    <textarea
+                      id="post-summary"
+                      required
+                      rows={3}
+                      maxLength={800}
+                      value={postForm.summary}
+                      onChange={(e) =>
+                        setPostForm((prev) => ({ ...prev, summary: e.target.value }))
+                      }
+                      placeholder="Key features, processor/GPU specs, display, and official Bangladesh warranty details..."
+                      className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
+                    />
+                  </div>
+
+                  <div className="space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-semibold text-slate-800">
+                        Key Specifications ({postForm.specs.length}/16)
+                      </label>
+                      <button
+                        type="button"
+                        onClick={handleAddPostSpecRow}
+                        className="text-xs font-semibold text-[#3749BB] hover:underline cursor-pointer"
+                      >
+                        + Add Spec Row
+                      </button>
+                    </div>
+                    <div className="space-y-2">
+                      {postForm.specs.map((spec, idx) => (
+                        <div key={idx} className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            maxLength={60}
+                            value={spec.label}
+                            onChange={(e) =>
+                              handlePostSpecChange(idx, 'label', e.target.value)
+                            }
+                            placeholder="Label (e.g. Processor)"
+                            className="w-1/3 px-3 py-2 rounded-lg border border-slate-200 text-xs focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
+                          />
+                          <input
+                            type="text"
+                            maxLength={120}
+                            value={spec.value}
+                            onChange={(e) =>
+                              handlePostSpecChange(idx, 'value', e.target.value)
+                            }
+                            placeholder="Value (e.g. Intel Core i5-13420H)"
+                            className="flex-1 px-3 py-2 rounded-lg border border-slate-200 text-xs focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleRemovePostSpecRow(idx)}
+                            aria-label="Remove spec row"
+                            className="p-2 text-slate-400 hover:text-red-600 cursor-pointer"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-4 pt-3 border-t border-slate-200">
+                    <label className="inline-flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={postForm.featured}
+                        onChange={(e) =>
+                          setPostForm((prev) => ({ ...prev, featured: e.target.checked }))
+                        }
+                        className="rounded border-slate-300 text-[#3749BB] focus:ring-[#3749BB]"
+                      />
+                      <span>Show in Featured Products</span>
+                    </label>
+
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-slate-500">Status:</span>
+                      <select
+                        value={postForm.status}
+                        onChange={(e) =>
+                          setPostForm((prev) => ({
+                            ...prev,
+                            status: e.target.value as 'active' | 'draft',
+                          }))
+                        }
+                        className="px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-medium bg-white"
+                      >
+                        <option value="active">Active (Live on Storefront)</option>
+                        <option value="draft">Draft (Hidden)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end pt-2">
+                    <button
+                      type="submit"
+                      className="px-6 py-3 rounded bg-[#EF4A23] text-white text-sm font-semibold hover:bg-[#D93E18] transition-colors cursor-pointer min-h-[44px]"
+                    >
+                      Publish Product
+                    </button>
+                  </div>
+                </form>
               </div>
 
-              <form onSubmit={handleInlinePostSubmit} className="p-6 space-y-5">
-                {postSuccess && (
-                  <div className="p-3.5 rounded-lg bg-emerald-50 border border-emerald-200 flex items-center justify-between gap-3 text-xs sm:text-sm text-emerald-800">
-                    <span className="flex items-center gap-2 font-medium">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
-                      {postSuccess}
-                    </span>
+              {/* Quick Edit & Delete List right under Post Form */}
+              {hasFirestoreProducts && (
+                <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                  <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between gap-3">
+                    <div>
+                      <h3 className="font-display text-base font-semibold text-slate-900">
+                        Manage Live Storefront Posts
+                      </h3>
+                      <p className="text-xs text-slate-500">
+                        Quickly edit or delete any published product listing.
+                      </p>
+                    </div>
                     <button
                       type="button"
                       onClick={() => setActiveTab('products')}
-                      className="text-xs font-semibold text-emerald-900 underline shrink-0 cursor-pointer"
-                    >
-                      View Products
-                    </button>
-                  </div>
-                )}
-
-                {postError && (
-                  <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700">
-                    {postError}
-                  </div>
-                )}
-
-                {/* Image Link + Live 4:3 Preview */}
-                <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 items-start p-4 rounded-xl bg-slate-50 border border-slate-200">
-                  <div className="sm:col-span-4 aspect-[4/3] rounded-lg overflow-hidden border border-slate-200 bg-white">
-                    <ProductImage
-                      src={postForm.imageUrl}
-                      alt={postForm.title || 'New product preview'}
-                    />
-                  </div>
-                  <div className="sm:col-span-8 space-y-2">
-                    <label
-                      htmlFor="post-image-url"
-                      className="flex items-center gap-1.5 text-xs font-semibold text-slate-800"
-                    >
-                      <LinkIcon className="w-3.5 h-3.5 text-[#3749BB]" />
-                      Product Image Link (URL)
-                    </label>
-                    <input
-                      id="post-image-url"
-                      type="url"
-                      required
-                      maxLength={1000}
-                      value={postForm.imageUrl}
-                      onChange={(e) =>
-                        setPostForm((prev) => ({ ...prev, imageUrl: e.target.value }))
-                      }
-                      placeholder="https://example.com/images/laptop-or-gpu.jpg"
-                      className="w-full px-3 py-2.5 rounded-lg border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
-                    />
-                    <div className="flex items-center justify-between text-xs text-slate-500">
-                      <span>Paste any direct HTTPS or HTTP image URL.</span>
-                      {postForm.imageUrl && isValidImageUrl(postForm.imageUrl) && (
-                        <span className="inline-flex items-center gap-1 text-emerald-700 font-medium">
-                          <CheckCircle2 className="w-3.5 h-3.5" />
-                          Valid Link
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="sm:col-span-2">
-                    <label
-                      htmlFor="post-title"
-                      className="block text-xs font-medium text-slate-700 mb-1"
-                    >
-                      Product Title
-                    </label>
-                    <input
-                      id="post-title"
-                      type="text"
-                      required
-                      maxLength={160}
-                      value={postForm.title}
-                      onChange={(e) =>
-                        setPostForm((prev) => ({ ...prev, title: e.target.value }))
-                      }
-                      placeholder="e.g. Lenovo IdeaPad Slim 5 Core i5 13th Gen 16GB RAM"
-                      className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
-                    />
-                  </div>
-
-                  <div>
-                    <label
-                      htmlFor="post-brand"
-                      className="block text-xs font-medium text-slate-700 mb-1"
-                    >
-                      Brand
-                    </label>
-                    <input
-                      id="post-brand"
-                      type="text"
-                      required
-                      maxLength={60}
-                      value={postForm.brand}
-                      onChange={(e) =>
-                        setPostForm((prev) => ({ ...prev, brand: e.target.value }))
-                      }
-                      placeholder="e.g. ASUS, MSI, Lenovo, AMD"
-                      className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
-                    />
-                  </div>
-
-                  <div>
-                    <label
-                      htmlFor="post-category"
-                      className="block text-xs font-medium text-slate-700 mb-1"
-                    >
-                      Category
-                    </label>
-                    <select
-                      id="post-category"
-                      value={postForm.category}
-                      onChange={(e) =>
-                        setPostForm((prev) => ({
-                          ...prev,
-                          category: e.target.value as ProductCategory,
-                        }))
-                      }
-                      className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
-                    >
-                      {PRODUCT_CATEGORIES.map((cat) => (
-                        <option key={cat} value={cat}>
-                          {cat}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label
-                      htmlFor="post-price"
-                      className="block text-xs font-medium text-slate-700 mb-1"
-                    >
-                      Special / Cash Price (BDT ৳)
-                    </label>
-                    <input
-                      id="post-price"
-                      type="number"
-                      required
-                      min={1}
-                      step="1"
-                      value={postForm.price || ''}
-                      onChange={(e) =>
-                        setPostForm((prev) => ({
-                          ...prev,
-                          price: Number(e.target.value),
-                        }))
-                      }
-                      placeholder="85000"
-                      className="w-full px-3 py-2.5 rounded-lg border border-slate-200 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
-                    />
-                  </div>
-
-                  <div>
-                    <label
-                      htmlFor="post-compare-price"
-                      className="block text-xs font-medium text-slate-700 mb-1"
-                    >
-                      Regular Price (BDT ৳, Optional)
-                    </label>
-                    <input
-                      id="post-compare-price"
-                      type="number"
-                      min={0}
-                      step="1"
-                      value={postForm.compareAtPrice || ''}
-                      onChange={(e) =>
-                        setPostForm((prev) => ({
-                          ...prev,
-                          compareAtPrice: Number(e.target.value || 0),
-                        }))
-                      }
-                      placeholder="92000"
-                      className="w-full px-3 py-2.5 rounded-lg border border-slate-200 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
-                    />
-                  </div>
-
-                  <div>
-                    <label
-                      htmlFor="post-stock"
-                      className="block text-xs font-medium text-slate-700 mb-1"
-                    >
-                      Stock Quantity
-                    </label>
-                    <input
-                      id="post-stock"
-                      type="number"
-                      required
-                      min={0}
-                      max={100000}
-                      value={postForm.stock}
-                      onChange={(e) =>
-                        setPostForm((prev) => ({
-                          ...prev,
-                          stock: Number(e.target.value),
-                        }))
-                      }
-                      className="w-full px-3 py-2.5 rounded-lg border border-slate-200 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
-                    />
-                  </div>
-
-                  <div>
-                    <label
-                      htmlFor="post-sku"
-                      className="block text-xs font-medium text-slate-700 mb-1"
-                    >
-                      SKU Code
-                    </label>
-                    <input
-                      id="post-sku"
-                      type="text"
-                      required
-                      maxLength={48}
-                      value={postForm.sku}
-                      onChange={(e) =>
-                        setPostForm((prev) => ({ ...prev, sku: e.target.value }))
-                      }
-                      placeholder="AKB-LTP-001"
-                      className="w-full px-3 py-2.5 rounded-lg border border-slate-200 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label
-                    htmlFor="post-summary"
-                    className="block text-xs font-medium text-slate-700 mb-1"
-                  >
-                    Short Description & Key Highlights
-                  </label>
-                  <textarea
-                    id="post-summary"
-                    required
-                    rows={3}
-                    maxLength={800}
-                    value={postForm.summary}
-                    onChange={(e) =>
-                      setPostForm((prev) => ({ ...prev, summary: e.target.value }))
-                    }
-                    placeholder="Key features, processor/GPU specs, display, and official Bangladesh warranty details..."
-                    className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
-                  />
-                </div>
-
-                {/* Quick Specs Builder */}
-                <div className="space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs font-semibold text-slate-800">
-                      Key Specifications ({postForm.specs.length}/16)
-                    </label>
-                    <button
-                      type="button"
-                      onClick={handleAddPostSpecRow}
                       className="text-xs font-semibold text-[#3749BB] hover:underline cursor-pointer"
                     >
-                      + Add Spec Row
+                      View All ({products.length})
                     </button>
                   </div>
-                  <div className="space-y-2">
-                    {postForm.specs.map((spec, idx) => (
-                      <div key={idx} className="flex items-center gap-2">
-                        <input
-                          type="text"
-                          maxLength={60}
-                          value={spec.label}
-                          onChange={(e) => handlePostSpecChange(idx, 'label', e.target.value)}
-                          placeholder="Label (e.g. Processor)"
-                          className="w-1/3 px-3 py-2 rounded-lg border border-slate-200 text-xs focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
-                        />
-                        <input
-                          type="text"
-                          maxLength={120}
-                          value={spec.value}
-                          onChange={(e) => handlePostSpecChange(idx, 'value', e.target.value)}
-                          placeholder="Value (e.g. Intel Core i5-13420H)"
-                          className="flex-1 px-3 py-2 rounded-lg border border-slate-200 text-xs focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => handleRemovePostSpecRow(idx)}
-                          aria-label="Remove spec row"
-                          className="p-2 text-slate-400 hover:text-red-600 cursor-pointer"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
+                  <div className="divide-y divide-slate-100">
+                    {products.slice(0, 6).map((p) => (
+                      <div
+                        key={p.id}
+                        className="px-6 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50/70"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="w-12 h-9 rounded overflow-hidden border border-slate-200 shrink-0">
+                            <ProductImage src={p.imageUrl} alt={p.title} />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-slate-900 truncate">
+                              {p.title}
+                            </p>
+                            <p className="text-xs font-mono text-slate-500 tabular-nums">
+                              {formatCurrency(p.price)} · {p.stock} in stock · {p.sku}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => openEditProduct(p)}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-blue-200 bg-blue-50 text-blue-800 text-xs font-semibold hover:bg-blue-100 cursor-pointer"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => requestDeleteProduct(p)}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-red-200 bg-red-50 text-red-700 text-xs font-semibold hover:bg-red-100 cursor-pointer"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            Delete
+                          </button>
+                        </div>
                       </div>
                     ))}
                   </div>
                 </div>
-
-                <div className="flex flex-wrap items-center justify-between gap-4 pt-3 border-t border-slate-200">
-                  <label className="inline-flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={postForm.featured}
-                      onChange={(e) =>
-                        setPostForm((prev) => ({ ...prev, featured: e.target.checked }))
-                      }
-                      className="rounded border-slate-300 text-[#3749BB] focus:ring-[#3749BB]"
-                    />
-                    <span>Show in Featured Products</span>
-                  </label>
-
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-slate-500">Status:</span>
-                    <select
-                      value={postForm.status}
-                      onChange={(e) =>
-                        setPostForm((prev) => ({
-                          ...prev,
-                          status: e.target.value as 'active' | 'draft',
-                        }))
-                      }
-                      className="px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-medium bg-white"
-                    >
-                      <option value="active">Active (Live on Storefront)</option>
-                      <option value="draft">Draft (Hidden)</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="flex justify-end pt-2">
-                  <button
-                    type="submit"
-                    disabled={postingProduct}
-                    className="px-6 py-3 rounded bg-[#EF4A23] text-white text-sm font-semibold hover:bg-[#D93E18] disabled:opacity-50 transition-colors cursor-pointer min-h-[44px]"
-                  >
-                    {postingProduct ? 'Publishing...' : 'Publish Product'}
-                  </button>
-                </div>
-              </form>
+              )}
             </div>
           )}
 
           {/* TAB 1: ANALYTICS */}
           {activeTab === 'analytics' && (
             <div className="space-y-6">
-              {/* 4 KPI Metrics */}
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 <div className="bg-white border border-slate-200 rounded-xl p-5">
                   <p className="text-xs font-medium text-slate-500">Gross Revenue</p>
@@ -896,17 +1142,16 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
                 </div>
 
                 <div className="bg-white border border-slate-200 rounded-xl p-5">
-                  <p className="text-xs font-medium text-slate-500">Active Customers</p>
+                  <p className="text-xs font-medium text-slate-500">Tracked Users</p>
                   <p className="font-mono text-2xl font-bold text-slate-900 mt-1 tabular-nums">
                     {analytics.activeCustomersCount}
                   </p>
                   <p className="text-xs text-slate-500 mt-1 tabular-nums">
-                    {analytics.totalInventoryUnits} units in stock
+                    {analytics.totalLogins} total sign-ins
                   </p>
                 </div>
               </div>
 
-              {/* Low Stock Alert Strip */}
               {(analytics.lowStockProducts.length > 0 ||
                 analytics.outOfStockProducts.length > 0) && (
                 <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -930,7 +1175,6 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
                 </div>
               )}
 
-              {/* Category Revenue Breakdown & Top Products */}
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
                 <div className="lg:col-span-6 bg-white border border-slate-200 rounded-xl p-6">
                   <h2 className="font-display text-base font-semibold text-slate-900 mb-4">
@@ -965,7 +1209,7 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
                   </h2>
                   {analytics.topProducts.length === 0 ? (
                     <p className="text-sm text-slate-500 py-6 text-center">
-                      No published products yet. Click "Post New Product" to add items.
+                      No published products yet. Click &quot;Post New Product&quot; to add items.
                     </p>
                   ) : (
                     <div className="divide-y divide-slate-100">
@@ -999,16 +1243,16 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
             </div>
           )}
 
-          {/* TAB 2: PRODUCT LISTINGS */}
+          {/* TAB 2: PRODUCT LISTINGS (EDIT & DELETE) */}
           {activeTab === 'products' && (
             <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
               <div className="p-5 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
                   <h2 className="font-display text-lg font-semibold text-slate-900">
-                    Product Listings & Live Inventory
+                    Product Listings — Edit, Delete & Stock
                   </h2>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    Post items with external image links and adjust stock levels in real time.
+                    All edits, stock updates, and product deletions require admin password confirmation.
                   </p>
                 </div>
                 <div className="relative w-full sm:w-64">
@@ -1042,7 +1286,7 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
                     {!hasFirestoreProducts && (
                       <button
                         type="button"
-                        onClick={() => void seedStarterCatalog()}
+                        onClick={requestSeedCatalog}
                         className="px-4 py-2.5 rounded-lg border border-slate-200 text-slate-700 text-sm font-medium hover:bg-slate-50 cursor-pointer min-h-[44px]"
                       >
                         Seed Starter Catalog
@@ -1068,12 +1312,12 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
                       {filteredProducts.map((p) => (
                         <tr key={p.id} className="hover:bg-slate-50/70">
                           <td className="py-3 px-4">
-                            <div className="flex items-center gap-3 min-w-[220px]">
+                            <div className="flex items-center gap-3 min-w-[210px]">
                               <div className="w-12 h-9 rounded overflow-hidden border border-slate-200 shrink-0">
                                 <ProductImage src={p.imageUrl} alt={p.title} />
                               </div>
                               <div className="min-w-0">
-                                <p className="font-medium text-slate-900 truncate max-w-[220px]">
+                                <p className="font-medium text-slate-900 truncate max-w-[210px]">
                                   {p.title}
                                 </p>
                                 <p className="text-xs font-mono text-slate-500">
@@ -1093,7 +1337,7 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
                               <button
                                 type="button"
                                 disabled={p.stock <= 0}
-                                onClick={() => void adjustProductStock(p.id, p.stock - 1)}
+                                onClick={() => requestStockChange(p, p.stock - 1)}
                                 aria-label="Decrease stock"
                                 className="p-1 rounded border border-slate-200 hover:bg-slate-100 disabled:opacity-40 cursor-pointer"
                               >
@@ -1112,7 +1356,7 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
                               </span>
                               <button
                                 type="button"
-                                onClick={() => void adjustProductStock(p.id, p.stock + 1)}
+                                onClick={() => requestStockChange(p, p.stock + 1)}
                                 aria-label="Increase stock"
                                 className="p-1 rounded border border-slate-200 hover:bg-slate-100 cursor-pointer"
                               >
@@ -1133,45 +1377,25 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
                             </span>
                           </td>
                           <td className="py-3 px-4 text-right whitespace-nowrap">
-                            <div className="inline-flex items-center gap-1">
+                            <div className="inline-flex items-center gap-2">
                               <button
                                 type="button"
                                 onClick={() => openEditProduct(p)}
                                 aria-label={`Edit ${p.title}`}
-                                className="p-2 rounded-lg text-slate-600 hover:text-blue-700 hover:bg-blue-50 cursor-pointer"
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-blue-200 bg-blue-50 text-blue-800 text-xs font-semibold hover:bg-blue-100 cursor-pointer"
                               >
-                                <Pencil className="w-4 h-4" />
+                                <Pencil className="w-3.5 h-3.5" />
+                                Edit
                               </button>
-                              {confirmDeleteId === p.id ? (
-                                <div className="inline-flex items-center gap-1">
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      void deleteProduct(p.id);
-                                      setConfirmDeleteId(null);
-                                    }}
-                                    className="px-2 py-1 rounded bg-red-600 text-white text-xs font-medium cursor-pointer"
-                                  >
-                                    Confirm
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => setConfirmDeleteId(null)}
-                                    className="px-2 py-1 rounded border border-slate-200 text-xs text-slate-600 cursor-pointer"
-                                  >
-                                    Cancel
-                                  </button>
-                                </div>
-                              ) : (
-                                <button
-                                  type="button"
-                                  onClick={() => setConfirmDeleteId(p.id)}
-                                  aria-label={`Delete ${p.title}`}
-                                  className="p-2 rounded-lg text-slate-500 hover:text-red-700 hover:bg-red-50 cursor-pointer"
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </button>
-                              )}
+                              <button
+                                type="button"
+                                onClick={() => requestDeleteProduct(p)}
+                                aria-label={`Delete ${p.title}`}
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-red-200 bg-red-50 text-red-700 text-xs font-semibold hover:bg-red-100 cursor-pointer"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                                Delete
+                              </button>
                             </div>
                           </td>
                         </tr>
@@ -1204,22 +1428,22 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
               <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
                 <div className="p-5 border-b border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-4">
                   <div className="flex flex-wrap items-center gap-1.5">
-                    {(['all', 'pending', 'processing', 'shipped', 'delivered', 'cancelled'] as const).map(
-                      (st) => (
-                        <button
-                          key={st}
-                          type="button"
-                          onClick={() => setOrderFilter(st)}
-                          className={`px-3 py-1.5 rounded-md text-xs font-medium capitalize cursor-pointer ${
-                            orderFilter === st
-                              ? 'bg-slate-900 text-white'
-                              : 'text-slate-600 hover:bg-slate-100'
-                          }`}
-                        >
-                          {st}
-                        </button>
-                      )
-                    )}
+                    {(
+                      ['all', 'pending', 'processing', 'shipped', 'delivered', 'cancelled'] as const
+                    ).map((st) => (
+                      <button
+                        key={st}
+                        type="button"
+                        onClick={() => setOrderFilter(st)}
+                        className={`px-3 py-1.5 rounded-md text-xs font-medium capitalize cursor-pointer ${
+                          orderFilter === st
+                            ? 'bg-slate-900 text-white'
+                            : 'text-slate-600 hover:bg-slate-100'
+                        }`}
+                      >
+                        {st}
+                      </button>
+                    ))}
                   </div>
                   <div className="relative w-full md:w-64">
                     <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -1261,7 +1485,8 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
                               <p className="text-xs text-slate-500">{order.customerEmail}</p>
                             </td>
                             <td className="py-3 px-4 text-xs text-slate-600 tabular-nums">
-                              {order.items.reduce((acc, i) => acc + i.quantity, 0)} items · {order.city}
+                              {order.items.reduce((acc, i) => acc + i.quantity, 0)} items ·{' '}
+                              {order.city}
                             </td>
                             <td className="py-3 px-4 text-right font-mono font-semibold text-slate-900 tabular-nums whitespace-nowrap">
                               {formatCurrency(order.totalAmount)}
@@ -1269,9 +1494,18 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
                             <td className="py-3 px-4">
                               <select
                                 value={order.status}
-                                onChange={(e) =>
-                                  void updateOrderStatus(order.id, e.target.value as OrderStatus)
-                                }
+                                onChange={(e) => {
+                                  const nextStatus = e.target.value as OrderStatus;
+                                  if (nextStatus === order.status) return;
+                                  requestPasswordConfirm({
+                                    title: 'Confirm Order Status Change',
+                                    description: `Change Order #${order.orderNumber} (${order.customerName}) status from "${order.status}" to "${nextStatus}".`,
+                                    confirmLabel: 'Confirm Status Update',
+                                    execute: async (pw) => {
+                                      await updateOrderStatus(order.id, nextStatus, pw);
+                                    },
+                                  });
+                                }}
                                 aria-label={`Update status for order ${order.orderNumber}`}
                                 className="px-2.5 py-1.5 rounded-md border border-slate-200 bg-white text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-700"
                               >
@@ -1302,7 +1536,6 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
                 )}
               </div>
 
-              {/* Order Inspection Panel */}
               {selectedOrder && (
                 <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-4">
                   <div className="flex items-start justify-between gap-4 border-b border-slate-200 pb-4">
@@ -1353,15 +1586,23 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
                         maxLength={500}
                         value={orderNoteDraft}
                         onChange={(e) => setOrderNoteDraft(e.target.value)}
-                        onKeyDown={async (e) => {
+                        onKeyDown={(e) => {
                           if (e.key === 'Enter') {
                             e.preventDefault();
-                            await updateOrderStatus(
-                              selectedOrder.id,
-                              selectedOrder.status,
-                              orderNoteDraft
-                            );
-                            setSelectedOrder(null);
+                            requestPasswordConfirm({
+                              title: 'Confirm Courier Note Update',
+                              description: `Save fulfillment note for Order #${selectedOrder.orderNumber}.`,
+                              confirmLabel: 'Confirm & Save Note',
+                              execute: async (pw) => {
+                                await updateOrderStatus(
+                                  selectedOrder.id,
+                                  selectedOrder.status,
+                                  pw,
+                                  orderNoteDraft
+                                );
+                                setSelectedOrder(null);
+                              },
+                            });
                           }
                         }}
                         placeholder="Add tracking ID or dispatch remarks..."
@@ -1370,13 +1611,21 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
                     </div>
                     <button
                       type="button"
-                      onClick={async () => {
-                        await updateOrderStatus(
-                          selectedOrder.id,
-                          selectedOrder.status,
-                          orderNoteDraft
-                        );
-                        setSelectedOrder(null);
+                      onClick={() => {
+                        requestPasswordConfirm({
+                          title: 'Confirm Courier Note Update',
+                          description: `Save fulfillment note for Order #${selectedOrder.orderNumber}.`,
+                          confirmLabel: 'Confirm & Save Note',
+                          execute: async (pw) => {
+                            await updateOrderStatus(
+                              selectedOrder.id,
+                              selectedOrder.status,
+                              pw,
+                              orderNoteDraft
+                            );
+                            setSelectedOrder(null);
+                          },
+                        });
                       }}
                       className="px-4 py-2 rounded-lg bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 cursor-pointer min-h-[40px]"
                     >
@@ -1388,14 +1637,14 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
             </div>
           )}
 
-          {/* TAB 4: CUSTOMER ANALYTICS & DIRECTORY */}
-          {activeTab === 'customers' && (
+          {/* TAB 4: LOGGED-IN USER TRACKING & POST PERMISSIONS */}
+          {activeTab === 'users' && (
             <div className="space-y-4">
               {!isAdmin && (
                 <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div className="text-xs sm:text-sm text-blue-950">
-                    <span className="font-semibold">Customer Privacy Protection: </span>
-                    Customer emails and phone numbers require connecting your authorized Google Admin account.
+                    <span className="font-semibold">User Login Privacy Protection: </span>
+                    Sign in with your authorized Google Admin account to view logged-in users and manage their Add/Edit product post permissions.
                   </div>
                   <button
                     type="button"
@@ -1406,76 +1655,200 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
                   </button>
                 </div>
               )}
-              <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-                <div className="p-5 border-b border-slate-200">
-                  <h2 className="font-display text-lg font-semibold text-slate-900">
-                    Customer Spend & Activity Directory
-                  </h2>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    Aggregated real-time insights across registered profiles and verified orders.
+
+              {/* Summary KPIs for Logged-In Users */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="bg-white border border-slate-200 rounded-xl p-4">
+                  <p className="text-xs font-medium text-slate-500">Tracked Logged-In Users</p>
+                  <p className="font-mono text-2xl font-bold text-slate-900 mt-1 tabular-nums">
+                    {analytics.trackedUsers.length}
                   </p>
                 </div>
-              {analytics.customerList.length === 0 ? (
-                <div className="p-12 text-center text-sm text-slate-500">
-                  No customer activity recorded yet.
+                <div className="bg-white border border-slate-200 rounded-xl p-4">
+                  <p className="text-xs font-medium text-slate-500">Total Sign-In Sessions</p>
+                  <p className="font-mono text-2xl font-bold text-slate-900 mt-1 tabular-nums">
+                    {analytics.totalLogins}
+                  </p>
                 </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="border-b border-slate-200 bg-slate-50 text-xs font-semibold text-slate-600">
-                        <th className="py-3 px-4">Customer</th>
-                        <th className="py-3 px-4">Location & Phone</th>
-                        <th className="py-3 px-4 text-right">Orders</th>
-                        <th className="py-3 px-4 text-right">Lifetime Spend</th>
-                        <th className="py-3 px-4 text-right">Last Active</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 text-sm">
-                      {analytics.customerList.map((cust) => (
-                        <tr key={cust.uid} className="hover:bg-slate-50/70">
-                          <td className="py-3 px-4">
-                            <p className="font-medium text-slate-900">{cust.name}</p>
-                            <p className="text-xs text-slate-500">{cust.email}</p>
-                          </td>
-                          <td className="py-3 px-4 text-xs text-slate-600">
-                            {cust.city} · {cust.phone}
-                          </td>
-                          <td className="py-3 px-4 text-right font-mono tabular-nums">
-                            {cust.orderCount}
-                          </td>
-                          <td className="py-3 px-4 text-right font-mono font-semibold text-slate-900 tabular-nums">
-                            {formatCurrency(cust.totalSpent)}
-                          </td>
-                          <td className="py-3 px-4 text-right text-xs text-slate-500 whitespace-nowrap">
-                            {cust.lastOrderMs > 0
-                              ? new Date(cust.lastOrderMs).toLocaleDateString('en-US', {
-                                  month: 'short',
-                                  day: 'numeric',
-                                  year: 'numeric',
-                                })
-                              : 'Registered'}
-                          </td>
+                <div className="bg-white border border-slate-200 rounded-xl p-4">
+                  <p className="text-xs font-medium text-slate-500">Users Permitted to Post / Edit</p>
+                  <p className="font-mono text-2xl font-bold text-[#3749BB] mt-1 tabular-nums">
+                    {analytics.permittedEditorsCount}
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                <div className="p-5 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div>
+                    <h2 className="font-display text-lg font-semibold text-slate-900">
+                      Logged-In Users & Post Permissions
+                    </h2>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Track user sign-ins and grant or revoke permission to Add or Edit product posts. Every permission change requires your admin password.
+                    </p>
+                  </div>
+                  <div className="relative w-full sm:w-64">
+                    <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="search"
+                      value={userSearch}
+                      onChange={(e) => setUserSearch(e.target.value)}
+                      placeholder="Filter users by name or email..."
+                      className="w-full pl-9 pr-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700"
+                    />
+                  </div>
+                </div>
+
+                {filteredUsers.length === 0 ? (
+                  <div className="p-12 text-center text-sm text-slate-500">
+                    No logged-in user activity recorded yet.
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="border-b border-slate-200 bg-slate-50 text-xs font-semibold text-slate-600">
+                          <th className="py-3 px-4">User</th>
+                          <th className="py-3 px-4 text-center">Logins</th>
+                          <th className="py-3 px-4">Last Login</th>
+                          <th className="py-3 px-4 text-right">Orders / Spend</th>
+                          <th className="py-3 px-4 text-center">Add Post</th>
+                          <th className="py-3 px-4 text-center">Edit Post</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 text-sm">
+                        {filteredUsers.map((u) => (
+                          <tr key={u.uid} className="hover:bg-slate-50/70">
+                            <td className="py-3 px-4">
+                              <div className="flex items-center gap-3">
+                                {u.photoURL ? (
+                                  <img
+                                    src={u.photoURL}
+                                    alt={u.name}
+                                    className="w-8 h-8 rounded-full object-cover border border-slate-200 shrink-0"
+                                  />
+                                ) : (
+                                  <div className="w-8 h-8 rounded-full bg-slate-200 text-slate-700 flex items-center justify-center text-xs font-bold shrink-0">
+                                    {u.name.charAt(0).toUpperCase()}
+                                  </div>
+                                )}
+                                <div className="min-w-0">
+                                  <p className="font-medium text-slate-900 truncate max-w-[180px]">
+                                    {u.name}
+                                  </p>
+                                  <p className="text-xs text-slate-500 truncate max-w-[200px]">
+                                    {u.email}
+                                  </p>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="py-3 px-4 text-center font-mono text-xs font-semibold text-slate-900 tabular-nums">
+                              {u.loginCount}
+                            </td>
+                            <td className="py-3 px-4 text-xs text-slate-600 whitespace-nowrap">
+                              {u.lastLoginMs > 0
+                                ? new Date(u.lastLoginMs).toLocaleString('en-US', {
+                                    month: 'short',
+                                    day: 'numeric',
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                  })
+                                : 'Recorded'}
+                            </td>
+                            <td className="py-3 px-4 text-right font-mono text-xs text-slate-700 tabular-nums whitespace-nowrap">
+                              {u.orderCount} · {formatCurrency(u.totalSpent)}
+                            </td>
+                            <td className="py-3 px-4 text-center whitespace-nowrap">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const nextAdd = !u.canAddPost;
+                                  requestPasswordConfirm({
+                                    title: 'Confirm Permission Update',
+                                    description: `${nextAdd ? 'Grant' : 'Revoke'} "Add Product Post" permission for ${u.name} (${u.email}).`,
+                                    confirmLabel: 'Confirm Permission Update',
+                                    execute: async (pw) => {
+                                      await updateUserPostPermission(
+                                        {
+                                          uid: u.uid,
+                                          email: u.email,
+                                          displayName: u.name,
+                                          photoURL: u.photoURL,
+                                        },
+                                        {
+                                          canAddPost: nextAdd,
+                                          canEditPost: u.canEditPost,
+                                        },
+                                        pw
+                                      );
+                                    },
+                                  });
+                                }}
+                                className={`px-3 py-1.5 rounded-lg border text-xs font-semibold transition-colors cursor-pointer ${
+                                  u.canAddPost
+                                    ? 'bg-emerald-600 border-emerald-600 text-white hover:bg-emerald-700'
+                                    : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-100'
+                                }`}
+                              >
+                                {u.canAddPost ? 'Allowed' : 'Disabled'}
+                              </button>
+                            </td>
+                            <td className="py-3 px-4 text-center whitespace-nowrap">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const nextEdit = !u.canEditPost;
+                                  requestPasswordConfirm({
+                                    title: 'Confirm Permission Update',
+                                    description: `${nextEdit ? 'Grant' : 'Revoke'} "Edit Product Post" permission for ${u.name} (${u.email}).`,
+                                    confirmLabel: 'Confirm Permission Update',
+                                    execute: async (pw) => {
+                                      await updateUserPostPermission(
+                                        {
+                                          uid: u.uid,
+                                          email: u.email,
+                                          displayName: u.name,
+                                          photoURL: u.photoURL,
+                                        },
+                                        {
+                                          canAddPost: u.canAddPost,
+                                          canEditPost: nextEdit,
+                                        },
+                                        pw
+                                      );
+                                    },
+                                  });
+                                }}
+                                className={`px-3 py-1.5 rounded-lg border text-xs font-semibold transition-colors cursor-pointer ${
+                                  u.canEditPost
+                                    ? 'bg-[#3749BB] border-[#3749BB] text-white hover:bg-[#2A3998]'
+                                    : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-100'
+                                }`}
+                              >
+                                {u.canEditPost ? 'Allowed' : 'Disabled'}
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             </div>
           )}
 
-          {/* TAB 5: ADMIN USERNAME & PASSWORD SETTINGS */}
+          {/* TAB 5: CHANGE ADMIN USERNAME & PASSWORD */}
           {activeTab === 'security' && (
             <div className="bg-white border border-slate-200 rounded-xl overflow-hidden max-w-2xl">
               <div className="px-6 py-4 border-b border-slate-200">
                 <h2 className="font-display text-lg font-semibold text-slate-900">
-                  Admin Login & Password
+                  Change Admin Username & Password
                 </h2>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Change the username and password required to unlock{' '}
-                  <span className="font-mono text-slate-700">/admin</span>. Credentials are stored hashed in your admin-only database record.
+                  Update the username and password required to unlock{' '}
+                  <span className="font-mono text-slate-700">/admin</span> and authorize every admin change.
                 </p>
               </div>
 
@@ -1505,7 +1878,7 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
                     htmlFor="sec-current-pw"
                     className="block text-xs font-semibold text-slate-700 mb-1"
                   >
-                    Current Password
+                    Current Admin Password
                   </label>
                   <div className="relative">
                     <input
@@ -1538,7 +1911,7 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
                     htmlFor="sec-new-username"
                     className="block text-xs font-semibold text-slate-700 mb-1"
                   >
-                    New Admin Username
+                    Admin Username
                   </label>
                   <input
                     id="sec-new-username"
@@ -1549,7 +1922,7 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
                     autoComplete="username"
                     value={newUsername}
                     onChange={(e) => setNewUsername(e.target.value)}
-                    placeholder="Enter new username (min 3 characters)"
+                    placeholder="Enter username (min 3 characters)"
                     className="w-full px-3.5 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
                   />
                 </div>
@@ -1618,7 +1991,7 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
                     disabled={credSaving}
                     className="px-6 py-2.5 rounded bg-[#3749BB] text-white text-sm font-semibold hover:bg-[#2A3998] disabled:opacity-50 transition-colors cursor-pointer min-h-[44px]"
                   >
-                    {credSaving ? 'Updating...' : 'Save New Credentials'}
+                    {credSaving ? 'Updating...' : 'Save New Password'}
                   </button>
                 </div>
               </form>
@@ -1627,10 +2000,10 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
         </div>
       </div>
 
-      {/* Product Create / Edit Modal (With Image URL Link Input & Live Preview) */}
+      {/* Product Edit Modal */}
       {formOpen && (
         <div
-          className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto"
+          className="fixed inset-0 z-40 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto"
           role="dialog"
           aria-modal="true"
           aria-label={editingProductId ? 'Edit Product' : 'Post New Product'}
@@ -1659,7 +2032,6 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
                 </div>
               )}
 
-              {/* Image URL Link Input + Live Preview */}
               <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 items-start p-4 rounded-xl bg-slate-50 border border-slate-200">
                 <div className="sm:col-span-4 aspect-[4/3] rounded-lg overflow-hidden border border-slate-200 bg-white">
                   <ProductImage
@@ -1848,7 +2220,6 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
                 />
               </div>
 
-              {/* Dynamic Technical Specs Builder */}
               <div className="space-y-2.5">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-semibold text-slate-800">
@@ -1894,7 +2265,6 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
                 </div>
               </div>
 
-              {/* Visibility & Featured Controls */}
               <div className="flex flex-wrap items-center justify-between gap-4 pt-2 border-t border-slate-200">
                 <label className="inline-flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
                   <input
@@ -1936,14 +2306,111 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
                 </button>
                 <button
                   type="submit"
-                  disabled={savingProduct}
-                  className="px-6 py-2.5 rounded-lg bg-blue-700 text-white text-sm font-semibold hover:bg-blue-800 disabled:opacity-50 cursor-pointer min-h-[44px]"
+                  className="px-6 py-2.5 rounded-lg bg-[#3749BB] text-white text-sm font-semibold hover:bg-[#2A3998] cursor-pointer min-h-[44px]"
                 >
-                  {savingProduct
-                    ? 'Publishing...'
-                    : editingProductId
-                      ? 'Save Changes'
-                      : 'Publish Product'}
+                  {editingProductId ? 'Save Changes' : 'Publish Product'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Admin Password Confirmation Modal (Required before EVERY Admin Panel change) */}
+      {pendingAction && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label={pendingAction.title}
+          onClick={() => {
+            if (!confirmActionBusy) setPendingAction(null);
+          }}
+        >
+          <div
+            className="bg-white border border-slate-200 rounded-xl max-w-md w-full overflow-hidden shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-6 py-4 bg-[#081621] text-white flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <Lock className="w-4 h-4 text-[#EF4A23]" />
+                <h2 className="font-display text-base font-bold">{pendingAction.title}</h2>
+              </div>
+              <button
+                type="button"
+                disabled={confirmActionBusy}
+                onClick={() => setPendingAction(null)}
+                aria-label="Cancel action"
+                className="p-1 text-slate-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleConfirmActionSubmit} className="p-6 space-y-4">
+              <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
+                {pendingAction.description}
+              </p>
+
+              {confirmActionError && (
+                <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700 font-medium">
+                  {confirmActionError}
+                </div>
+              )}
+
+              <div>
+                <label
+                  htmlFor="confirm-admin-pw"
+                  className="block text-xs font-semibold text-slate-700 mb-1"
+                >
+                  Admin Password ({adminCredentialUsername})
+                </label>
+                <div className="relative">
+                  <input
+                    id="confirm-admin-pw"
+                    type={showActionPassword ? 'text' : 'password'}
+                    autoFocus
+                    required
+                    autoComplete="current-password"
+                    value={confirmActionPassword}
+                    onChange={(e) => setConfirmActionPassword(e.target.value)}
+                    placeholder="Enter admin password to confirm"
+                    className="w-full pl-3.5 pr-10 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowActionPassword((v) => !v)}
+                    aria-label={showActionPassword ? 'Hide password' : 'Show password'}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-700 cursor-pointer"
+                  >
+                    {showActionPassword ? (
+                      <EyeOff className="w-4 h-4" />
+                    ) : (
+                      <Eye className="w-4 h-4" />
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-2">
+                <button
+                  type="button"
+                  disabled={confirmActionBusy}
+                  onClick={() => setPendingAction(null)}
+                  className="px-4 py-2.5 rounded-lg border border-slate-200 text-xs sm:text-sm font-medium text-slate-700 hover:bg-slate-50 cursor-pointer min-h-[42px]"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={confirmActionBusy}
+                  className={`px-5 py-2.5 rounded-lg text-white text-xs sm:text-sm font-semibold disabled:opacity-50 transition-colors cursor-pointer min-h-[42px] ${
+                    pendingAction.danger
+                      ? 'bg-red-600 hover:bg-red-700'
+                      : 'bg-[#3749BB] hover:bg-[#2A3998]'
+                  }`}
+                >
+                  {confirmActionBusy ? 'Verifying...' : pendingAction.confirmLabel}
                 </button>
               </div>
             </form>

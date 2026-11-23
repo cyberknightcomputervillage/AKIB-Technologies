@@ -323,6 +323,71 @@
         }
       },
       "required": ["username", "proofHash", "auditId", "updatedAt"]
+    },
+    "UserAccess": {
+      "title": "UserAccess",
+      "description": "Tracks signed-in user login activity and admin-granted add/edit product permissions.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 160
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "photoURL": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "loginCount": {
+          "type": "integer"
+        },
+        "canAddPost": {
+          "type": "boolean"
+        },
+        "canEditPost": {
+          "type": "boolean"
+        },
+        "auditId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "lastLoginAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "uid",
+        "email",
+        "displayName",
+        "photoURL",
+        "loginCount",
+        "canAddPost",
+        "canEditPost",
+        "lastLoginAt",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -343,6 +408,12 @@
         "$ref": "#/entities/AdminCredential"
       },
       "description": "Non-readable admin portal credential proof hash and changeable username."
+    },
+    "/userAccess/{userId}": {
+      "schema": {
+        "$ref": "#/entities/UserAccess"
+      },
+      "description": "Login history and admin-managed product post/edit permissions per signed-in user."
     },
     "/users/{userId}": {
       "schema": {

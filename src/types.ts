@@ -53,6 +53,19 @@ export interface UserProfile {
   updatedAt?: Timestamp;
 }
 
+export interface UserAccess {
+  uid: string;
+  email: string;
+  displayName: string;
+  photoURL: string;
+  loginCount: number;
+  canAddPost: boolean;
+  canEditPost: boolean;
+  lastLoginAt?: Timestamp;
+  createdAt?: Timestamp;
+  updatedAt?: Timestamp;
+}
+
 export type PaymentMethod = 'cod' | 'card_on_delivery' | 'bank_transfer';
 
 export type OrderStatus = 'pending' | 'processing' | 'shipped' | 'delivered' | 'cancelled';
@@ -92,4 +105,4 @@ export interface CartItem {
 }
 
 export type AppView = 'store' | 'orders' | 'admin';
-export type AdminTab = 'post' | 'products' | 'orders' | 'analytics' | 'customers' | 'security';
+export type AdminTab = 'post' | 'products' | 'orders' | 'users' | 'analytics' | 'security';

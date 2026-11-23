@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Check, Minus, Plus, ShieldCheck, ShoppingBag, Truck, X } from 'lucide-react';
+import { Minus, Pencil, Plus, ShieldCheck, ShoppingBag, Truck, X } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 import { formatCurrency } from '../lib/validation';
 import type { Product } from '../types';
@@ -9,14 +9,16 @@ interface ProductDetailModalProps {
   product: Product | null;
   onClose: () => void;
   onOpenCart: () => void;
+  onEditProduct?: (product: Product) => void;
 }
 
 export function ProductDetailModal({
   product,
   onClose,
   onOpenCart,
+  onEditProduct,
 }: ProductDetailModalProps) {
-  const { addToCart } = useStore();
+  const { addToCart, userAccess } = useStore();
   const [qty, setQty] = useState(1);
   const [paymentView, setPaymentView] = useState<'cash' | 'emi'>('cash');
 
@@ -59,14 +61,29 @@ export function ProductDetailModal({
             <span aria-hidden="true">·</span>
             <span className="font-mono text-slate-700">Product Code: {product.sku}</span>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close product details"
-            className="p-2 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-200/70 transition-colors cursor-pointer min-h-[40px] min-w-[40px] flex items-center justify-center"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            {userAccess?.canEditPost && !product.isPreviewOnly && onEditProduct && (
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onEditProduct(product);
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-blue-200 bg-blue-50 text-blue-800 text-xs font-semibold hover:bg-blue-100 cursor-pointer"
+              >
+                <Pencil className="w-3.5 h-3.5" />
+                Edit Post
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close product details"
+              className="p-2 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-200/70 transition-colors cursor-pointer min-h-[40px] min-w-[40px] flex items-center justify-center"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* StarTech Contiguous Purchase Module */}
