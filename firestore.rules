@@ -67,6 +67,35 @@ service cloud.firestore {
         && getAfter(/databases/$(database)/documents/adminProofs/$(auditId)).data.createdAt == request.time;
     }
 
+    function isValidStaffProofToken(staffId, proof) {
+      return isValidId(staffId)
+        && proof is string
+        && proof.size() == 64
+        && proof.matches('^[a-f0-9]+$')
+        && exists(/databases/$(database)/documents/staffSecrets/$(staffId))
+        && get(/databases/$(database)/documents/staffSecrets/$(staffId)).data.active == true
+        && hashing.sha256(proof).toHexString().lower() == get(/databases/$(database)/documents/staffSecrets/$(staffId)).data.proofHash;
+    }
+
+    function isValidStaffLoginBatch(staffId, auditId) {
+      return isValidId(staffId)
+        && isValidId(auditId)
+        && existsAfter(/databases/$(database)/documents/staffProofs/$(auditId))
+        && getAfter(/databases/$(database)/documents/staffProofs/$(auditId)).data.staffId == staffId
+        && getAfter(/databases/$(database)/documents/staffProofs/$(auditId)).data.createdAt == request.time
+        && exists(/databases/$(database)/documents/staffSecrets/$(staffId))
+        && get(/databases/$(database)/documents/staffSecrets/$(staffId)).data.active == true;
+    }
+
+    function isValidStaffPermissionBatch(staffId, auditId, perm) {
+      return isValidStaffLoginBatch(staffId, auditId) && (
+        (perm == 'add' && get(/databases/$(database)/documents/staffSecrets/$(staffId)).data.canAddProduct == true) ||
+        (perm == 'edit' && get(/databases/$(database)/documents/staffSecrets/$(staffId)).data.canEditProduct == true) ||
+        (perm == 'delete' && get(/databases/$(database)/documents/staffSecrets/$(staffId)).data.canDeleteProduct == true) ||
+        (perm == 'orders' && get(/databases/$(database)/documents/staffSecrets/$(staffId)).data.canManageOrders == true)
+      );
+    }
+
     function canUserAddPost() {
       return isVerifiedUser()
         && exists(/databases/$(database)/documents/userAccess/$(request.auth.uid))
@@ -104,6 +133,66 @@ service cloud.firestore {
         && data.username is string && data.username.size() >= 3 && data.username.size() <= 60
         && data.proofHash is string && data.proofHash.size() == 64 && data.proofHash.matches('^[a-f0-9]+$')
         && isValidId(data.auditId)
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidStaffProof(data) {
+      return data.keys().hasAll(['staffId', 'proof', 'createdAt'])
+        && data.keys().hasOnly(['staffId', 'proof', 'createdAt'])
+        && isValidId(data.staffId)
+        && data.staffId.size() >= 3 && data.staffId.size() <= 60
+        && data.proof is string && data.proof.size() == 64 && data.proof.matches('^[a-f0-9]+$')
+        && data.createdAt is timestamp;
+    }
+
+    function isValidStaffSecret(data) {
+      return data.keys().hasAll([
+          'staffId', 'proofHash', 'active', 'canAddProduct', 'canEditProduct',
+          'canDeleteProduct', 'canManageOrders', 'canViewAnalytics', 'auditId', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'staffId', 'proofHash', 'active', 'canAddProduct', 'canEditProduct',
+          'canDeleteProduct', 'canManageOrders', 'canViewAnalytics', 'auditId', 'updatedAt'
+        ])
+        && isValidId(data.staffId)
+        && data.staffId.size() >= 3 && data.staffId.size() <= 60
+        && data.proofHash is string && data.proofHash.size() == 64 && data.proofHash.matches('^[a-f0-9]+$')
+        && data.active is bool
+        && data.canAddProduct is bool
+        && data.canEditProduct is bool
+        && data.canDeleteProduct is bool
+        && data.canManageOrders is bool
+        && data.canViewAnalytics is bool
+        && isValidId(data.auditId)
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidStaffAccount(data) {
+      return data.keys().hasAll([
+          'staffId', 'username', 'displayName', 'active', 'status',
+          'canAddProduct', 'canEditProduct', 'canDeleteProduct',
+          'canManageOrders', 'canViewAnalytics', 'loginCount', 'auditId', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'staffId', 'username', 'displayName', 'active', 'status',
+          'canAddProduct', 'canEditProduct', 'canDeleteProduct',
+          'canManageOrders', 'canViewAnalytics', 'loginCount', 'auditId',
+          'lastLoginAt', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.staffId) && data.staffId.size() >= 3 && data.staffId.size() <= 60
+        && isValidId(data.username) && data.username.size() >= 3 && data.username.size() <= 60
+        && data.displayName is string && data.displayName.size() >= 2 && data.displayName.size() <= 80
+        && data.active is bool
+        && data.status in ['active', 'suspended', 'deleted']
+        && data.canAddProduct is bool
+        && data.canEditProduct is bool
+        && data.canDeleteProduct is bool
+        && data.canManageOrders is bool
+        && data.canViewAnalytics is bool
+        && data.loginCount is int && data.loginCount >= 0 && data.loginCount <= 1000000
+        && isValidId(data.auditId)
+        && (!('lastLoginAt' in data) || data.lastLoginAt is timestamp)
+        && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
 
@@ -158,7 +247,7 @@ service cloud.firestore {
         && data.keys().hasOnly([
           'title', 'brand', 'category', 'sku', 'price', 'compareAtPrice',
           'stock', 'soldCount', 'imageUrl', 'summary', 'specs',
-          'featured', 'status', 'lastOrderId', 'auditId', 'createdBy', 'createdAt', 'updatedAt'
+          'featured', 'status', 'lastOrderId', 'auditId', 'staffId', 'createdBy', 'createdAt', 'updatedAt'
         ])
         && data.title is string && data.title.size() >= 2 && data.title.size() <= 160
         && data.brand is string && data.brand.size() >= 1 && data.brand.size() <= 60
@@ -185,6 +274,7 @@ service cloud.firestore {
         && data.status in ['active', 'draft', 'archived']
         && data.lastOrderId is string && data.lastOrderId.size() >= 1 && data.lastOrderId.size() <= 128
         && (!('auditId' in data) || isValidId(data.auditId))
+        && (!('staffId' in data) || isValidId(data.staffId))
         && isValidId(data.createdBy)
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
@@ -201,7 +291,7 @@ service cloud.firestore {
           'orderNumber', 'userId', 'customerName', 'customerEmail',
           'customerPhone', 'shippingAddress', 'city', 'paymentMethod',
           'items', 'subtotal', 'shippingFee', 'totalAmount',
-          'status', 'notes', 'auditId', 'createdAt', 'updatedAt'
+          'status', 'notes', 'auditId', 'staffId', 'createdAt', 'updatedAt'
         ])
         && data.orderNumber is string && data.orderNumber.size() >= 4 && data.orderNumber.size() <= 32 && data.orderNumber.matches('^[a-zA-Z0-9_\\-]+$')
         && isValidId(data.userId)
@@ -227,6 +317,7 @@ service cloud.firestore {
         && data.status in ['pending', 'processing', 'shipped', 'delivered', 'cancelled']
         && data.notes is string && data.notes.size() <= 500
         && (!('auditId' in data) || isValidId(data.auditId))
+        && (!('staffId' in data) || isValidId(data.staffId))
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
@@ -270,6 +361,69 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    match /staffProofs/{proofId} {
+      allow read: if false;
+      allow create: if isValidId(proofId)
+        && isValidStaffProof(incoming())
+        && incoming().createdAt == request.time
+        && isValidStaffProofToken(incoming().staffId, incoming().proof);
+      allow update, delete: if false;
+    }
+
+    match /staffSecrets/{staffId} {
+      allow get, list: if false;
+      allow create: if isValidId(staffId)
+        && isValidStaffSecret(incoming())
+        && incoming().staffId == staffId
+        && incoming().updatedAt == request.time
+        && (isAdmin() || isValidAdminProofBatch(incoming().auditId));
+      allow update: if isValidId(staffId)
+        && isValidStaffSecret(incoming())
+        && incoming().staffId == existing().staffId
+        && incoming().updatedAt == request.time
+        && (isAdmin() || isValidAdminProofBatch(incoming().auditId));
+      allow delete: if false;
+    }
+
+    match /staffAccounts/{staffId} {
+      allow get: if isValidId(staffId) && (existing().status in ['active', 'suspended'] || isAdmin());
+      allow list: if resource.data.status in ['active', 'suspended'] || isAdmin();
+      allow create: if isValidId(staffId)
+        && isValidStaffAccount(incoming())
+        && incoming().staffId == staffId
+        && incoming().loginCount == 0
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (isAdmin() || isValidAdminProofBatch(incoming().auditId));
+      allow update: if isValidId(staffId)
+        && isValidStaffAccount(incoming())
+        && incoming().staffId == existing().staffId
+        && incoming().username == existing().username
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          // Tier 1: Super Admin updates manager status or checkbox permissions
+          (
+            (isAdmin() || isValidAdminProofBatch(incoming().auditId))
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'displayName', 'active', 'status',
+              'canAddProduct', 'canEditProduct', 'canDeleteProduct',
+              'canManageOrders', 'canViewAnalytics', 'auditId', 'updatedAt'
+            ])
+          ) ||
+          // Tier 2: Verified manager records login event
+          (
+            isValidStaffLoginBatch(staffId, incoming().auditId)
+            && incoming().loginCount == existing().loginCount + 1
+            && incoming().lastLoginAt == request.time
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'loginCount', 'lastLoginAt', 'auditId', 'updatedAt'
+            ])
+          )
+        );
+      allow delete: if false;
+    }
+
     match /userAccess/{userId} {
       allow get: if isSignedIn() && isValidId(userId) && (isOwner(userId) || isAdmin());
       allow list: if isAdmin();
@@ -298,7 +452,6 @@ service cloud.firestore {
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
         && (
-          // Tier 1: Admin grants/revokes Add/Edit product post permissions
           (
             (
               isAdmin() ||
@@ -306,7 +459,6 @@ service cloud.firestore {
             )
             && incoming().diff(existing()).affectedKeys().hasOnly(['canAddPost', 'canEditPost', 'auditId', 'updatedAt'])
           ) ||
-          // Tier 2: Verified user records login event (cannot escalate permissions)
           (
             isVerifiedUser()
             && isOwner(userId)
@@ -354,15 +506,16 @@ service cloud.firestore {
         && incoming().updatedAt == request.time
         && (
           (isAdmin() && incoming().createdBy == request.auth.uid) ||
-          (canUserAddPost() && incoming().createdBy == request.auth.uid && !('auditId' in incoming())) ||
-          (('auditId' in incoming()) && isValidAdminProofBatch(incoming().auditId) && incoming().createdBy == 'admin_portal')
+          (canUserAddPost() && incoming().createdBy == request.auth.uid && !('auditId' in incoming()) && !('staffId' in incoming())) ||
+          (('auditId' in incoming()) && !('staffId' in incoming()) && isValidAdminProofBatch(incoming().auditId) && incoming().createdBy == 'admin_portal') ||
+          (('auditId' in incoming()) && ('staffId' in incoming()) && isValidStaffPermissionBatch(incoming().staffId, incoming().auditId, 'add') && incoming().createdBy == incoming().staffId)
         );
       allow update: if isValidId(productId) && isValidProduct(incoming()) && (
-        // Tier 1a: Admin full catalog & inventory update (Google Admin OR Atomic Credential Proof Batch)
+        // Tier 1a: Super Admin full catalog & inventory update
         (
           (
             isAdmin() ||
-            (('auditId' in incoming()) && isValidAdminProofBatch(incoming().auditId))
+            (('auditId' in incoming()) && !('staffId' in incoming()) && isValidAdminProofBatch(incoming().auditId))
           )
           && incoming().createdBy == existing().createdBy
           && incoming().createdAt == existing().createdAt
@@ -372,10 +525,38 @@ service cloud.firestore {
             'stock', 'imageUrl', 'summary', 'specs', 'featured', 'status', 'auditId', 'updatedAt'
           ])
         ) ||
-        // Tier 1b: Admin-permitted editor (canEditPost) modifying active/draft product listing
+        // Tier 1b: Manager with canEditProduct modifying active/draft product or stock
+        (
+          ('auditId' in incoming())
+          && ('staffId' in incoming())
+          && isValidStaffPermissionBatch(incoming().staffId, incoming().auditId, 'edit')
+          && incoming().status in ['active', 'draft']
+          && incoming().createdBy == existing().createdBy
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'title', 'brand', 'category', 'sku', 'price', 'compareAtPrice',
+            'stock', 'imageUrl', 'summary', 'specs', 'featured', 'status', 'staffId', 'auditId', 'updatedAt'
+          ])
+        ) ||
+        // Tier 1c: Manager with canDeleteProduct archiving product
+        (
+          ('auditId' in incoming())
+          && ('staffId' in incoming())
+          && isValidStaffPermissionBatch(incoming().staffId, incoming().auditId, 'delete')
+          && incoming().status == 'archived'
+          && incoming().createdBy == existing().createdBy
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'status', 'staffId', 'auditId', 'updatedAt'
+          ])
+        ) ||
+        // Tier 1d: Storefront permitted editor (canEditPost) modifying active/draft listing
         (
           canUserEditPost()
           && !('auditId' in incoming())
+          && !('staffId' in incoming())
           && incoming().status in ['active', 'draft']
           && incoming().createdBy == existing().createdBy
           && incoming().createdAt == existing().createdAt
@@ -424,15 +605,22 @@ service cloud.firestore {
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
         && (
-          // Tier 1: Admin order lifecycle management (can correct states)
+          // Tier 1a: Super Admin order lifecycle management
           (
             (
               isAdmin() ||
-              (('auditId' in incoming()) && isValidAdminProofBatch(incoming().auditId))
+              (('auditId' in incoming()) && !('staffId' in incoming()) && isValidAdminProofBatch(incoming().auditId))
             )
             && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'notes', 'auditId', 'updatedAt'])
           ) ||
-          // Tier 2: Customer may only cancel their own pending order (terminal states locked)
+          // Tier 1b: Manager with canManageOrders permission
+          (
+            ('auditId' in incoming())
+            && ('staffId' in incoming())
+            && isValidStaffPermissionBatch(incoming().staffId, incoming().auditId, 'orders')
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'notes', 'staffId', 'auditId', 'updatedAt'])
+          ) ||
+          // Tier 2: Customer may only cancel their own pending order
           (
             isVerifiedUser()
             && existing().userId == request.auth.uid

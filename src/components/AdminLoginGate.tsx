@@ -48,9 +48,9 @@ export function AdminLoginGate({ onBackToStore }: AdminLoginGateProps) {
           <div className="flex items-center gap-2.5">
             <Lock className="w-5 h-5 text-[#EF4A23]" />
             <div>
-              <h1 className="font-display text-lg font-bold">AKIB Technologies Admin</h1>
+              <h1 className="font-display text-lg font-bold">AKIB Operations Portal</h1>
               <p className="text-xs text-slate-300">
-                Sign in with your admin username and password
+                Sign in with your admin or manager username and password
               </p>
             </div>
           </div>
@@ -73,7 +73,7 @@ export function AdminLoginGate({ onBackToStore }: AdminLoginGateProps) {
                 htmlFor="admin-username"
                 className="block text-xs font-semibold text-slate-700 mb-1"
               >
-                Admin Username
+                Username
               </label>
               <input
                 id="admin-username"
@@ -84,7 +84,7 @@ export function AdminLoginGate({ onBackToStore }: AdminLoginGateProps) {
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Enter admin username"
+                placeholder="Enter admin or manager username"
                 className="w-full px-3.5 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
               />
             </div>
@@ -94,7 +94,7 @@ export function AdminLoginGate({ onBackToStore }: AdminLoginGateProps) {
                 htmlFor="admin-password"
                 className="block text-xs font-semibold text-slate-700 mb-1"
               >
-                Admin Password
+                Password
               </label>
               <div className="relative">
                 <input
@@ -105,7 +105,7 @@ export function AdminLoginGate({ onBackToStore }: AdminLoginGateProps) {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder="Enter admin password"
+                  placeholder="Enter password"
                   className="w-full pl-3.5 pr-10 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
                 />
                 <button
@@ -124,7 +124,7 @@ export function AdminLoginGate({ onBackToStore }: AdminLoginGateProps) {
               disabled={submitting}
               className="w-full px-5 py-3 rounded bg-[#EF4A23] text-white text-sm font-semibold hover:bg-[#D93E18] disabled:bg-slate-300 disabled:text-slate-500 transition-colors cursor-pointer min-h-[44px]"
             >
-              {submitting ? 'Signing In...' : 'Sign In to Admin Panel'}
+              {submitting ? 'Signing In...' : 'Sign In to Panel'}
             </button>
 
             <p className="text-[11px] text-center text-slate-400">

@@ -53,3 +53,32 @@ export async function createCredentialUpdatePayload(
     auditId,
   };
 }
+
+export async function deriveStaffProofToken(
+  staffId: string,
+  password: string
+): Promise<string> {
+  const normalized = staffId.trim().toLowerCase();
+  return sha256Hex(`${normalized}:${password}:akib_staff_proof_v1`);
+}
+
+export async function createStaffCredentialPayload(
+  username: string,
+  password: string
+): Promise<{
+  staffId: string;
+  username: string;
+  token: string;
+  proofHash: string;
+}> {
+  const cleanUsername = username.trim();
+  const staffId = cleanUsername.toLowerCase();
+  const token = await deriveStaffProofToken(staffId, password);
+  const proofHash = await sha256Hex(token);
+  return {
+    staffId,
+    username: cleanUsername,
+    token,
+    proofHash,
+  };
+}

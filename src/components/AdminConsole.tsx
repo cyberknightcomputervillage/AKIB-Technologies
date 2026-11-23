@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   ArrowLeft,
@@ -11,13 +11,16 @@ import {
   Lock,
   Minus,
   Package,
+  PauseCircle,
   Pencil,
+  PlayCircle,
   Plus,
   PlusCircle,
   Search,
   ShieldCheck,
   ShoppingCart,
   Trash2,
+  UserPlus,
   Users,
   X,
 } from 'lucide-react';
@@ -36,6 +39,8 @@ import {
   type Product,
   type ProductCategory,
   type ProductSpec,
+  type StaffAccount,
+  type StaffPermissions,
 } from '../types';
 import { ProductImage } from './ProductImage';
 
@@ -73,10 +78,53 @@ function createFreshPostForm(): ProductInput {
   };
 }
 
+const STAFF_PERMISSION_OPTIONS: {
+  key: keyof StaffPermissions;
+  label: string;
+  hint: string;
+}[] = [
+  {
+    key: 'canAddProduct',
+    label: 'Add / Post Products',
+    hint: 'Create new listings with image links and specs',
+  },
+  {
+    key: 'canEditProduct',
+    label: 'Edit Products & Stock',
+    hint: 'Modify prices, details, and adjust stock counts',
+  },
+  {
+    key: 'canDeleteProduct',
+    label: 'Delete Products',
+    hint: 'Remove product listings from the catalog',
+  },
+  {
+    key: 'canManageOrders',
+    label: 'Manage Orders',
+    hint: 'View orders, update status, and save courier notes',
+  },
+  {
+    key: 'canViewAnalytics',
+    label: 'View Analytics',
+    hint: 'Access gross revenue and sales breakdown',
+  },
+];
+
+const DEFAULT_NEW_STAFF_PERMS: StaffPermissions = {
+  canAddProduct: true,
+  canEditProduct: true,
+  canDeleteProduct: false,
+  canManageOrders: false,
+  canViewAnalytics: false,
+};
+
 export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
   const {
     isAdmin,
     adminUnlocked,
+    adminRole,
+    activeStaffAccount,
+    staffAccounts,
     products,
     hasFirestoreProducts,
     orders,
@@ -90,9 +138,34 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
     deleteProduct,
     updateOrderStatus,
     updateUserPostPermission,
+    createStaffAccount,
+    updateStaffPermissions,
+    updateStaffPassword,
+    setStaffStatus,
     lockAdminPortal,
     updateAdminCredentials,
   } = useStore();
+
+  const isSuperAdmin = adminRole === 'super_admin';
+  const perms: StaffPermissions = useMemo(
+    () =>
+      isSuperAdmin
+        ? {
+            canAddProduct: true,
+            canEditProduct: true,
+            canDeleteProduct: true,
+            canManageOrders: true,
+            canViewAnalytics: true,
+          }
+        : {
+            canAddProduct: Boolean(activeStaffAccount?.canAddProduct),
+            canEditProduct: Boolean(activeStaffAccount?.canEditProduct),
+            canDeleteProduct: Boolean(activeStaffAccount?.canDeleteProduct),
+            canManageOrders: Boolean(activeStaffAccount?.canManageOrders),
+            canViewAnalytics: Boolean(activeStaffAccount?.canViewAnalytics),
+          },
+    [isSuperAdmin, activeStaffAccount]
+  );
 
   const [activeTab, setActiveTab] = useState<AdminTab>('post');
   const [productSearch, setProductSearch] = useState('');
@@ -104,6 +177,19 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
   const [postForm, setPostForm] = useState<ProductInput>(createFreshPostForm);
   const [postError, setPostError] = useState<string | null>(null);
   const [postSuccess, setPostSuccess] = useState<string | null>(null);
+
+  // Add New Manager Form State ('users' tab, Super Admin only)
+  const [newStaffName, setNewStaffName] = useState('');
+  const [newStaffUsername, setNewStaffUsername] = useState('');
+  const [newStaffPassword, setNewStaffPassword] = useState('');
+  const [showNewStaffPw, setShowNewStaffPw] = useState(false);
+  const [newStaffPerms, setNewStaffPerms] = useState<StaffPermissions>(DEFAULT_NEW_STAFF_PERMS);
+  const [newStaffError, setNewStaffError] = useState<string | null>(null);
+  const [staffPermDrafts, setStaffPermDrafts] = useState<Record<string, StaffPermissions>>({});
+  const [resetPwStaff, setResetPwStaff] = useState<StaffAccount | null>(null);
+  const [resetPwValue, setResetPwValue] = useState('');
+  const [showResetPwValue, setShowResetPwValue] = useState(false);
+  const [resetPwError, setResetPwError] = useState<string | null>(null);
 
   // Admin Login & Password Update State ('security' tab)
   const [currentPassword, setCurrentPassword] = useState('');
@@ -126,7 +212,7 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [orderNoteDraft, setOrderNoteDraft] = useState('');
 
-  // Global Admin Password Confirmation Modal State (required for EVERY Admin Panel change)
+  // Global Admin/Manager Password Confirmation Modal State (required for EVERY Admin Panel change)
   const [pendingAction, setPendingAction] = useState<PendingAdminAction | null>(null);
   const [confirmActionPassword, setConfirmActionPassword] = useState('');
   const [showActionPassword, setShowActionPassword] = useState(false);
@@ -561,18 +647,123 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
     });
   };
 
-  const navTabs: {
-    id: AdminTab;
-    label: string;
-    icon: React.ComponentType<{ className?: string }>;
-  }[] = [
-    { id: 'post', label: 'Post Product', icon: PlusCircle },
-    { id: 'products', label: 'Products (Edit / Delete)', icon: Package },
-    { id: 'orders', label: 'Orders', icon: ShoppingCart },
-    { id: 'users', label: 'Users & Permissions', icon: Users },
-    { id: 'analytics', label: 'Analytics', icon: BarChart3 },
-    { id: 'security', label: 'Change Password', icon: KeyRound },
-  ];
+  const navTabs = useMemo(() => {
+    const list: {
+      id: AdminTab;
+      label: string;
+      icon: React.ComponentType<{ className?: string }>;
+    }[] = [];
+    if (perms.canAddProduct) {
+      list.push({ id: 'post', label: 'Post Product', icon: PlusCircle });
+    }
+    if (perms.canEditProduct || perms.canDeleteProduct) {
+      list.push({
+        id: 'products',
+        label:
+          perms.canEditProduct && perms.canDeleteProduct
+            ? 'Products (Edit / Delete)'
+            : perms.canEditProduct
+              ? 'Products (Edit & Stock)'
+              : 'Products (Delete)',
+        icon: Package,
+      });
+    }
+    if (perms.canManageOrders) {
+      list.push({ id: 'orders', label: 'Orders', icon: ShoppingCart });
+    }
+    if (isSuperAdmin) {
+      list.push({ id: 'users', label: 'Managers & Users', icon: Users });
+    }
+    if (perms.canViewAnalytics) {
+      list.push({ id: 'analytics', label: 'Analytics', icon: BarChart3 });
+    }
+    if (isSuperAdmin) {
+      list.push({ id: 'security', label: 'Change Password', icon: KeyRound });
+    }
+    return list;
+  }, [perms, isSuperAdmin]);
+
+  useEffect(() => {
+    if (navTabs.length > 0 && !navTabs.some((t) => t.id === activeTab)) {
+      setActiveTab(navTabs[0].id);
+    }
+  }, [navTabs, activeTab]);
+
+  const handleCreateStaffSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setNewStaffError(null);
+    const cleanName = newStaffName.trim();
+    const cleanUser = newStaffUsername.trim();
+    if (cleanName.length < 2) {
+      setNewStaffError('Manager full name must be at least 2 characters.');
+      return;
+    }
+    if (!/^[a-zA-Z0-9_-]{3,60}$/.test(cleanUser)) {
+      setNewStaffError(
+        'Username must be 3–60 characters using only letters, numbers, hyphens (-), or underscores (_).'
+      );
+      return;
+    }
+    if (newStaffPassword.length < 4 || newStaffPassword.length > 100) {
+      setNewStaffError('Manager password must be between 4 and 100 characters.');
+      return;
+    }
+    if (staffAccounts.some((s) => s.staffId === cleanUser.toLowerCase())) {
+      setNewStaffError(`Username "@${cleanUser}" already exists.`);
+      return;
+    }
+
+    const enabledLabels = STAFF_PERMISSION_OPTIONS.filter((o) => newStaffPerms[o.key]).map(
+      (o) => o.label
+    );
+
+    requestPasswordConfirm({
+      title: 'Confirm Create Manager Account',
+      description: `Create manager "${cleanName}" (@${cleanUser}) with ${
+        enabledLabels.length > 0 ? enabledLabels.join(', ') : 'no permissions checked yet'
+      }.`,
+      confirmLabel: 'Create Manager',
+      execute: async (pw) => {
+        await createStaffAccount(
+          {
+            displayName: cleanName,
+            username: cleanUser,
+            password: newStaffPassword,
+            ...newStaffPerms,
+          },
+          pw
+        );
+        setNewStaffName('');
+        setNewStaffUsername('');
+        setNewStaffPassword('');
+        setNewStaffPerms(DEFAULT_NEW_STAFF_PERMS);
+      },
+    });
+  };
+
+  const getManagerPerms = (m: StaffAccount): StaffPermissions => {
+    return (
+      staffPermDrafts[m.staffId] || {
+        canAddProduct: Boolean(m.canAddProduct),
+        canEditProduct: Boolean(m.canEditProduct),
+        canDeleteProduct: Boolean(m.canDeleteProduct),
+        canManageOrders: Boolean(m.canManageOrders),
+        canViewAnalytics: Boolean(m.canViewAnalytics),
+      }
+    );
+  };
+
+  const isManagerPermsDirty = (m: StaffAccount): boolean => {
+    const draft = staffPermDrafts[m.staffId];
+    if (!draft) return false;
+    return (
+      draft.canAddProduct !== Boolean(m.canAddProduct) ||
+      draft.canEditProduct !== Boolean(m.canEditProduct) ||
+      draft.canDeleteProduct !== Boolean(m.canDeleteProduct) ||
+      draft.canManageOrders !== Boolean(m.canManageOrders) ||
+      draft.canViewAnalytics !== Boolean(m.canViewAnalytics)
+    );
+  };
 
   return (
     <div className="max-w-[1280px] mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -587,39 +778,52 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
             <ArrowLeft className="w-3.5 h-3.5" />
             Storefront
           </button>
-          <h1 className="font-display text-2xl sm:text-3xl font-bold text-slate-900">
-            AKIB Operations Console
-          </h1>
+          <div className="flex flex-wrap items-center gap-2.5">
+            <h1 className="font-display text-2xl sm:text-3xl font-bold text-slate-900">
+              AKIB Operations Console
+            </h1>
+            {!isSuperAdmin && activeStaffAccount && (
+              <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-blue-50 border border-blue-200 text-xs font-semibold text-[#3749BB]">
+                Manager: {activeStaffAccount.displayName} (@{activeStaffAccount.username})
+              </span>
+            )}
+          </div>
           <p className="text-xs text-slate-500 mt-1 flex items-center gap-1.5">
             <ShieldCheck className="w-3.5 h-3.5 text-[#3749BB]" />
-            Admin password confirmation is required before every database change.
+            Password confirmation is required before every database change.
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
-          <button
-            type="button"
-            onClick={requestSeedCatalog}
-            className="px-4 py-2.5 rounded border border-slate-200 bg-white text-slate-800 text-xs sm:text-sm font-medium hover:bg-slate-50 cursor-pointer min-h-[42px]"
-          >
-            {hasFirestoreProducts ? 'Sync BDT Starter Catalog' : 'Seed BDT Starter Catalog'}
-          </button>
-          <button
-            type="button"
-            onClick={openCreateProduct}
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded bg-[#EF4A23] text-white text-xs sm:text-sm font-semibold hover:bg-[#D93E18] transition-colors cursor-pointer min-h-[42px]"
-          >
-            <Plus className="w-4 h-4" />
-            Post New Product
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('security')}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded border border-slate-200 bg-white text-slate-700 text-xs sm:text-sm font-medium hover:bg-slate-50 transition-colors cursor-pointer min-h-[42px]"
-          >
-            <KeyRound className="w-4 h-4 text-[#3749BB]" />
-            Change Password
-          </button>
+          {isSuperAdmin && (
+            <button
+              type="button"
+              onClick={requestSeedCatalog}
+              className="px-4 py-2.5 rounded border border-slate-200 bg-white text-slate-800 text-xs sm:text-sm font-medium hover:bg-slate-50 cursor-pointer min-h-[42px]"
+            >
+              {hasFirestoreProducts ? 'Sync BDT Starter Catalog' : 'Seed BDT Starter Catalog'}
+            </button>
+          )}
+          {perms.canAddProduct && (
+            <button
+              type="button"
+              onClick={openCreateProduct}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded bg-[#EF4A23] text-white text-xs sm:text-sm font-semibold hover:bg-[#D93E18] transition-colors cursor-pointer min-h-[42px]"
+            >
+              <Plus className="w-4 h-4" />
+              Post New Product
+            </button>
+          )}
+          {isSuperAdmin && (
+            <button
+              type="button"
+              onClick={() => setActiveTab('security')}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded border border-slate-200 bg-white text-slate-700 text-xs sm:text-sm font-medium hover:bg-slate-50 transition-colors cursor-pointer min-h-[42px]"
+            >
+              <KeyRound className="w-4 h-4 text-[#3749BB]" />
+              Change Password
+            </button>
+          )}
           <button
             type="button"
             onClick={lockAdminPortal}
@@ -632,6 +836,17 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
       </div>
 
       {/* Responsive Workspace Shell */}
+      {navTabs.length === 0 ? (
+        <div className="bg-white border border-slate-200 rounded-xl p-10 text-center space-y-3 max-w-xl mx-auto">
+          <Lock className="w-8 h-8 text-slate-400 mx-auto" />
+          <h2 className="font-display text-lg font-semibold text-slate-900">
+            No Permissions Enabled
+          </h2>
+          <p className="text-sm text-slate-600">
+            Your manager account (@{adminCredentialUsername}) does not have any checked permissions yet. Ask the store administrator to check permissions for your account.
+          </p>
+        </div>
+      ) : (
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
         <aside className="lg:col-span-3">
           <nav
@@ -665,13 +880,13 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
                       {analytics.pendingCount}
                     </span>
                   )}
-                  {tab.id === 'users' && analytics.trackedUsers.length > 0 && (
+                  {tab.id === 'users' && (staffAccounts.length > 0 || analytics.trackedUsers.length > 0) && (
                     <span
                       className={`font-mono text-xs tabular-nums ${
                         active ? 'text-blue-300' : 'text-slate-500'
                       }`}
                     >
-                      {analytics.trackedUsers.length}
+                      {staffAccounts.length}
                     </span>
                   )}
                 </button>
@@ -683,7 +898,7 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
         {/* Main Viewport */}
         <div className="lg:col-span-9 space-y-6 min-w-0">
           {/* TAB 0: POST PRODUCT + QUICK MANAGE */}
-          {activeTab === 'post' && (
+          {activeTab === 'post' && perms.canAddProduct && (
             <div className="space-y-6">
               <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
                 <div className="px-6 py-4 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -1047,7 +1262,7 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
               </div>
 
               {/* Quick Edit & Delete List right under Post Form */}
-              {hasFirestoreProducts && (
+              {hasFirestoreProducts && (perms.canEditProduct || perms.canDeleteProduct) && (
                 <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
                   <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between gap-3">
                     <div>
@@ -1055,7 +1270,7 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
                         Manage Live Storefront Posts
                       </h3>
                       <p className="text-xs text-slate-500">
-                        Quickly edit or delete any published product listing.
+                        Quickly manage published product listings.
                       </p>
                     </div>
                     <button
@@ -1086,22 +1301,26 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
                           </div>
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => openEditProduct(p)}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-blue-200 bg-blue-50 text-blue-800 text-xs font-semibold hover:bg-blue-100 cursor-pointer"
-                          >
-                            <Pencil className="w-3.5 h-3.5" />
-                            Edit
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => requestDeleteProduct(p)}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-red-200 bg-red-50 text-red-700 text-xs font-semibold hover:bg-red-100 cursor-pointer"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                            Delete
-                          </button>
+                          {perms.canEditProduct && (
+                            <button
+                              type="button"
+                              onClick={() => openEditProduct(p)}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-blue-200 bg-blue-50 text-blue-800 text-xs font-semibold hover:bg-blue-100 cursor-pointer"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                              Edit
+                            </button>
+                          )}
+                          {perms.canDeleteProduct && (
+                            <button
+                              type="button"
+                              onClick={() => requestDeleteProduct(p)}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-red-200 bg-red-50 text-red-700 text-xs font-semibold hover:bg-red-100 cursor-pointer"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              Delete
+                            </button>
+                          )}
                         </div>
                       </div>
                     ))}
@@ -1112,7 +1331,7 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
           )}
 
           {/* TAB 1: ANALYTICS */}
-          {activeTab === 'analytics' && (
+          {activeTab === 'analytics' && perms.canViewAnalytics && (
             <div className="space-y-6">
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 <div className="bg-white border border-slate-200 rounded-xl p-5">
@@ -1165,13 +1384,15 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
                       </span>
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab('products')}
-                    className="text-xs font-semibold text-amber-900 underline cursor-pointer self-start sm:self-center"
-                  >
-                    Restock in Products
-                  </button>
+                  {perms.canEditProduct && (
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('products')}
+                      className="text-xs font-semibold text-amber-900 underline cursor-pointer self-start sm:self-center"
+                    >
+                      Restock in Products
+                    </button>
+                  )}
                 </div>
               )}
 
@@ -1244,7 +1465,7 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
           )}
 
           {/* TAB 2: PRODUCT LISTINGS (EDIT & DELETE) */}
-          {activeTab === 'products' && (
+          {activeTab === 'products' && (perms.canEditProduct || perms.canDeleteProduct) && (
             <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
               <div className="p-5 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
@@ -1252,7 +1473,7 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
                     Product Listings — Edit, Delete & Stock
                   </h2>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    All edits, stock updates, and product deletions require admin password confirmation.
+                    All edits, stock updates, and product deletions require password confirmation.
                   </p>
                 </div>
                 <div className="relative w-full sm:w-64">
@@ -1273,17 +1494,19 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
                     No products in Firestore catalog
                   </p>
                   <p className="text-sm text-slate-500">
-                    Post your first product using an image URL or publish the starter hardware catalog.
+                    No matching products available yet.
                   </p>
                   <div className="flex justify-center gap-3 pt-2">
-                    <button
-                      type="button"
-                      onClick={openCreateProduct}
-                      className="px-4 py-2.5 rounded-lg bg-blue-700 text-white text-sm font-medium hover:bg-blue-800 cursor-pointer min-h-[44px]"
-                    >
-                      Post New Product
-                    </button>
-                    {!hasFirestoreProducts && (
+                    {perms.canAddProduct && (
+                      <button
+                        type="button"
+                        onClick={openCreateProduct}
+                        className="px-4 py-2.5 rounded-lg bg-blue-700 text-white text-sm font-medium hover:bg-blue-800 cursor-pointer min-h-[44px]"
+                      >
+                        Post New Product
+                      </button>
+                    )}
+                    {isSuperAdmin && !hasFirestoreProducts && (
                       <button
                         type="button"
                         onClick={requestSeedCatalog}
@@ -1334,15 +1557,17 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
                           </td>
                           <td className="py-3 px-4">
                             <div className="flex items-center justify-center gap-1.5">
-                              <button
-                                type="button"
-                                disabled={p.stock <= 0}
-                                onClick={() => requestStockChange(p, p.stock - 1)}
-                                aria-label="Decrease stock"
-                                className="p-1 rounded border border-slate-200 hover:bg-slate-100 disabled:opacity-40 cursor-pointer"
-                              >
-                                <Minus className="w-3.5 h-3.5" />
-                              </button>
+                              {perms.canEditProduct && (
+                                <button
+                                  type="button"
+                                  disabled={p.stock <= 0}
+                                  onClick={() => requestStockChange(p, p.stock - 1)}
+                                  aria-label="Decrease stock"
+                                  className="p-1 rounded border border-slate-200 hover:bg-slate-100 disabled:opacity-40 cursor-pointer"
+                                >
+                                  <Minus className="w-3.5 h-3.5" />
+                                </button>
+                              )}
                               <span
                                 className={`w-10 text-center font-mono text-xs font-semibold tabular-nums ${
                                   p.stock === 0
@@ -1354,14 +1579,16 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
                               >
                                 {p.stock}
                               </span>
-                              <button
-                                type="button"
-                                onClick={() => requestStockChange(p, p.stock + 1)}
-                                aria-label="Increase stock"
-                                className="p-1 rounded border border-slate-200 hover:bg-slate-100 cursor-pointer"
-                              >
-                                <Plus className="w-3.5 h-3.5" />
-                              </button>
+                              {perms.canEditProduct && (
+                                <button
+                                  type="button"
+                                  onClick={() => requestStockChange(p, p.stock + 1)}
+                                  aria-label="Increase stock"
+                                  className="p-1 rounded border border-slate-200 hover:bg-slate-100 cursor-pointer"
+                                >
+                                  <Plus className="w-3.5 h-3.5" />
+                                </button>
+                              )}
                             </div>
                           </td>
                           <td className="py-3 px-4 text-right font-mono text-xs text-slate-600 tabular-nums">
@@ -1378,24 +1605,28 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
                           </td>
                           <td className="py-3 px-4 text-right whitespace-nowrap">
                             <div className="inline-flex items-center gap-2">
-                              <button
-                                type="button"
-                                onClick={() => openEditProduct(p)}
-                                aria-label={`Edit ${p.title}`}
-                                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-blue-200 bg-blue-50 text-blue-800 text-xs font-semibold hover:bg-blue-100 cursor-pointer"
-                              >
-                                <Pencil className="w-3.5 h-3.5" />
-                                Edit
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => requestDeleteProduct(p)}
-                                aria-label={`Delete ${p.title}`}
-                                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-red-200 bg-red-50 text-red-700 text-xs font-semibold hover:bg-red-100 cursor-pointer"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                                Delete
-                              </button>
+                              {perms.canEditProduct && (
+                                <button
+                                  type="button"
+                                  onClick={() => openEditProduct(p)}
+                                  aria-label={`Edit ${p.title}`}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-blue-200 bg-blue-50 text-blue-800 text-xs font-semibold hover:bg-blue-100 cursor-pointer"
+                                >
+                                  <Pencil className="w-3.5 h-3.5" />
+                                  Edit
+                                </button>
+                              )}
+                              {perms.canDeleteProduct && (
+                                <button
+                                  type="button"
+                                  onClick={() => requestDeleteProduct(p)}
+                                  aria-label={`Delete ${p.title}`}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-red-200 bg-red-50 text-red-700 text-xs font-semibold hover:bg-red-100 cursor-pointer"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                  Delete
+                                </button>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -1408,7 +1639,7 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
           )}
 
           {/* TAB 3: ORDER MANAGEMENT */}
-          {activeTab === 'orders' && (
+          {activeTab === 'orders' && perms.canManageOrders && (
             <div className="space-y-4">
               {!isAdmin && (
                 <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -1637,9 +1868,342 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
             </div>
           )}
 
-          {/* TAB 4: LOGGED-IN USER TRACKING & POST PERMISSIONS */}
-          {activeTab === 'users' && (
-            <div className="space-y-4">
+          {/* TAB 4: MANAGERS (ADD USERNAME/PASSWORD + CHECKBOXES) & TRACKED USERS */}
+          {activeTab === 'users' && isSuperAdmin && (
+            <div className="space-y-6">
+              {/* Create New Manager Account Form */}
+              <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                <div className="px-6 py-4 border-b border-slate-200 flex items-center gap-2.5">
+                  <UserPlus className="w-5 h-5 text-[#EF4A23]" />
+                  <div>
+                    <h2 className="font-display text-lg font-semibold text-slate-900">
+                      Add New Manager Account
+                    </h2>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Create a username and password for a manager and check the boxes for what they are allowed to do in /admin.
+                    </p>
+                  </div>
+                </div>
+
+                <form onSubmit={handleCreateStaffSubmit} className="p-6 space-y-5">
+                  {newStaffError && (
+                    <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700">
+                      {newStaffError}
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div>
+                      <label
+                        htmlFor="mgr-name"
+                        className="block text-xs font-semibold text-slate-700 mb-1"
+                      >
+                        Manager Name
+                      </label>
+                      <input
+                        id="mgr-name"
+                        type="text"
+                        required
+                        minLength={2}
+                        maxLength={80}
+                        value={newStaffName}
+                        onChange={(e) => setNewStaffName(e.target.value)}
+                        placeholder="e.g. Rahim Ahmed"
+                        className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
+                      />
+                    </div>
+
+                    <div>
+                      <label
+                        htmlFor="mgr-username"
+                        className="block text-xs font-semibold text-slate-700 mb-1"
+                      >
+                        Login Username
+                      </label>
+                      <input
+                        id="mgr-username"
+                        type="text"
+                        required
+                        minLength={3}
+                        maxLength={60}
+                        value={newStaffUsername}
+                        onChange={(e) => setNewStaffUsername(e.target.value)}
+                        placeholder="e.g. rahim"
+                        className="w-full px-3 py-2.5 rounded-lg border border-slate-200 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
+                      />
+                    </div>
+
+                    <div>
+                      <label
+                        htmlFor="mgr-password"
+                        className="block text-xs font-semibold text-slate-700 mb-1"
+                      >
+                        Login Password
+                      </label>
+                      <div className="relative">
+                        <input
+                          id="mgr-password"
+                          type={showNewStaffPw ? 'text' : 'password'}
+                          required
+                          minLength={4}
+                          maxLength={100}
+                          value={newStaffPassword}
+                          onChange={(e) => setNewStaffPassword(e.target.value)}
+                          placeholder="Min 4 characters"
+                          className="w-full pl-3 pr-10 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowNewStaffPw((v) => !v)}
+                          aria-label={showNewStaffPw ? 'Hide password' : 'Show password'}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-700 cursor-pointer"
+                        >
+                          {showNewStaffPw ? (
+                            <EyeOff className="w-4 h-4" />
+                          ) : (
+                            <Eye className="w-4 h-4" />
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <p className="text-xs font-semibold text-slate-800 mb-2.5">
+                      Select Manager Permissions (Checkboxes)
+                    </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                      {STAFF_PERMISSION_OPTIONS.map((opt) => (
+                        <label
+                          key={opt.key}
+                          className={`flex items-start gap-2.5 p-3 rounded-lg border cursor-pointer transition-colors ${
+                            newStaffPerms[opt.key]
+                              ? 'bg-blue-50/70 border-[#3749BB]/40'
+                              : 'bg-slate-50 border-slate-200 hover:bg-slate-100/70'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={newStaffPerms[opt.key]}
+                            onChange={(e) =>
+                              setNewStaffPerms((prev) => ({
+                                ...prev,
+                                [opt.key]: e.target.checked,
+                              }))
+                            }
+                            className="mt-0.5 rounded border-slate-300 text-[#3749BB] focus:ring-[#3749BB]"
+                          />
+                          <div className="min-w-0">
+                            <p className="text-xs font-semibold text-slate-900">{opt.label}</p>
+                            <p className="text-[11px] text-slate-500 leading-snug">{opt.hint}</p>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end pt-1">
+                    <button
+                      type="submit"
+                      className="inline-flex items-center gap-2 px-5 py-2.5 rounded bg-[#EF4A23] text-white text-sm font-semibold hover:bg-[#D93E18] transition-colors cursor-pointer min-h-[42px]"
+                    >
+                      <UserPlus className="w-4 h-4" />
+                      Add Manager Account
+                    </button>
+                  </div>
+                </form>
+              </div>
+
+              {/* Existing Manager Accounts List with Editable Checkboxes */}
+              <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between gap-3">
+                  <div>
+                    <h2 className="font-display text-lg font-semibold text-slate-900">
+                      Manager Accounts ({staffAccounts.length})
+                    </h2>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Check or uncheck permissions per manager, reset their password, or suspend/delete access.
+                    </p>
+                  </div>
+                </div>
+
+                {staffAccounts.length === 0 ? (
+                  <div className="p-8 text-center text-sm text-slate-500">
+                    No manager accounts added yet. Use the form above to create a username, password, and permission checkboxes for your manager.
+                  </div>
+                ) : (
+                  <div className="divide-y divide-slate-200">
+                    {staffAccounts.map((mgr) => {
+                      const currentPerms = getManagerPerms(mgr);
+                      const dirty = isManagerPermsDirty(mgr);
+                      const lastLoginMs = mgr.lastLoginAt?.toMillis?.() ?? 0;
+                      return (
+                        <div key={mgr.staffId} className="p-5 space-y-4">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="font-semibold text-slate-900 text-sm">
+                                  {mgr.displayName}
+                                </span>
+                                <span className="font-mono text-xs text-slate-500">
+                                  @{mgr.username}
+                                </span>
+                                <span
+                                  className={`px-2 py-0.5 rounded text-[11px] font-semibold ${
+                                    mgr.status === 'active' && mgr.active
+                                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                      : 'bg-amber-50 text-amber-800 border border-amber-200'
+                                  }`}
+                                >
+                                  {mgr.status === 'active' && mgr.active ? 'Active' : 'Suspended'}
+                                </span>
+                              </div>
+                              <p className="text-xs text-slate-500 mt-0.5 font-mono tabular-nums">
+                                {mgr.loginCount || 0} logins ·{' '}
+                                {lastLoginMs > 0
+                                  ? `Last login ${new Date(lastLoginMs).toLocaleString('en-US', {
+                                      month: 'short',
+                                      day: 'numeric',
+                                      hour: '2-digit',
+                                      minute: '2-digit',
+                                    })}`
+                                  : 'Never signed in yet'}
+                              </p>
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setResetPwStaff(mgr);
+                                  setResetPwValue('');
+                                  setShowResetPwValue(false);
+                                  setResetPwError(null);
+                                }}
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-700 text-xs font-semibold hover:bg-slate-50 cursor-pointer"
+                              >
+                                <KeyRound className="w-3.5 h-3.5" />
+                                Reset Password
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const nextStatus =
+                                    mgr.status === 'active' ? 'suspended' : 'active';
+                                  requestPasswordConfirm({
+                                    title:
+                                      nextStatus === 'suspended'
+                                        ? 'Confirm Suspend Manager'
+                                        : 'Confirm Activate Manager',
+                                    description: `${
+                                      nextStatus === 'suspended' ? 'Suspend' : 'Re-activate'
+                                    } login access for ${mgr.displayName} (@${mgr.username}).`,
+                                    confirmLabel:
+                                      nextStatus === 'suspended'
+                                        ? 'Suspend Manager'
+                                        : 'Activate Manager',
+                                    execute: async (pw) => {
+                                      await setStaffStatus(mgr.staffId, nextStatus, pw);
+                                    },
+                                  });
+                                }}
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-amber-200 bg-amber-50 text-amber-800 text-xs font-semibold hover:bg-amber-100 cursor-pointer"
+                              >
+                                {mgr.status === 'active' ? (
+                                  <>
+                                    <PauseCircle className="w-3.5 h-3.5" />
+                                    Suspend
+                                  </>
+                                ) : (
+                                  <>
+                                    <PlayCircle className="w-3.5 h-3.5" />
+                                    Activate
+                                  </>
+                                )}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  requestPasswordConfirm({
+                                    title: 'Confirm Delete Manager',
+                                    description: `Permanently delete manager "${mgr.displayName}" (@${mgr.username}). Their login will stop working immediately (use Suspend if you may re-enable them later).`,
+                                    confirmLabel: 'Confirm & Delete',
+                                    danger: true,
+                                    execute: async (pw) => {
+                                      await setStaffStatus(mgr.staffId, 'deleted', pw);
+                                    },
+                                  });
+                                }}
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-red-200 bg-red-50 text-red-700 text-xs font-semibold hover:bg-red-100 cursor-pointer"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                                Delete
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-100">
+                            <div className="flex flex-wrap items-center gap-3">
+                              {STAFF_PERMISSION_OPTIONS.map((opt) => (
+                                <label
+                                  key={opt.key}
+                                  className="inline-flex items-center gap-1.5 text-xs text-slate-700 cursor-pointer select-none"
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={currentPerms[opt.key]}
+                                    onChange={(e) => {
+                                      const checked = e.target.checked;
+                                      setStaffPermDrafts((prev) => ({
+                                        ...prev,
+                                        [mgr.staffId]: {
+                                          ...getManagerPerms(mgr),
+                                          [opt.key]: checked,
+                                        },
+                                      }));
+                                    }}
+                                    className="rounded border-slate-300 text-[#3749BB] focus:ring-[#3749BB]"
+                                  />
+                                  <span className="font-medium">{opt.label}</span>
+                                </label>
+                              ))}
+                            </div>
+
+                            <button
+                              type="button"
+                              disabled={!dirty}
+                              onClick={() => {
+                                const snapshot = getManagerPerms(mgr);
+                                requestPasswordConfirm({
+                                  title: 'Confirm Save Manager Permissions',
+                                  description: `Update permission checkboxes for ${mgr.displayName} (@${mgr.username}).`,
+                                  confirmLabel: 'Save Checkboxes',
+                                  execute: async (pw) => {
+                                    await updateStaffPermissions(mgr.staffId, snapshot, pw);
+                                    setStaffPermDrafts((prev) => {
+                                      const next = { ...prev };
+                                      delete next[mgr.staffId];
+                                      return next;
+                                    });
+                                  },
+                                });
+                              }}
+                              className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                                dirty
+                                  ? 'bg-[#3749BB] text-white hover:bg-[#2A3998]'
+                                  : 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                              }`}
+                            >
+                              Save Checkboxes
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
               {!isAdmin && (
                 <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div className="text-xs sm:text-sm text-blue-950">
@@ -1840,7 +2404,7 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
           )}
 
           {/* TAB 5: CHANGE ADMIN USERNAME & PASSWORD */}
-          {activeTab === 'security' && (
+          {activeTab === 'security' && isSuperAdmin && (
             <div className="bg-white border border-slate-200 rounded-xl overflow-hidden max-w-2xl">
               <div className="px-6 py-4 border-b border-slate-200">
                 <h2 className="font-display text-lg font-semibold text-slate-900">
@@ -1999,6 +2563,7 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
           )}
         </div>
       </div>
+      )}
 
       {/* Product Edit Modal */}
       {formOpen && (
@@ -2363,7 +2928,7 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
                   htmlFor="confirm-admin-pw"
                   className="block text-xs font-semibold text-slate-700 mb-1"
                 >
-                  Admin Password ({adminCredentialUsername})
+                  {isSuperAdmin ? 'Admin' : 'Manager'} Password ({adminCredentialUsername})
                 </label>
                 <div className="relative">
                   <input
@@ -2374,7 +2939,7 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
                     autoComplete="current-password"
                     value={confirmActionPassword}
                     onChange={(e) => setConfirmActionPassword(e.target.value)}
-                    placeholder="Enter admin password to confirm"
+                    placeholder={`Enter your ${isSuperAdmin ? 'admin' : 'manager'} password to confirm`}
                     className="w-full pl-3.5 pr-10 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
                   />
                   <button
@@ -2411,6 +2976,121 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
                   }`}
                 >
                   {confirmActionBusy ? 'Verifying...' : pendingAction.confirmLabel}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Manager Password Reset Modal */}
+      {resetPwStaff && (
+        <div
+          className="fixed inset-0 z-40 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Reset password for ${resetPwStaff.displayName}`}
+          onClick={() => setResetPwStaff(null)}
+        >
+          <div
+            className="bg-white border border-slate-200 rounded-xl max-w-md w-full overflow-hidden shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-6 py-4 bg-[#081621] text-white flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <KeyRound className="w-4 h-4 text-[#EF4A23]" />
+                <h2 className="font-display text-base font-bold">
+                  Reset Manager Password
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setResetPwStaff(null)}
+                aria-label="Close"
+                className="p-1 text-slate-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                setResetPwError(null);
+                if (resetPwValue.length < 4 || resetPwValue.length > 100) {
+                  setResetPwError('Password must be between 4 and 100 characters.');
+                  return;
+                }
+                const target = resetPwStaff;
+                const nextPw = resetPwValue;
+                setResetPwStaff(null);
+                requestPasswordConfirm({
+                  title: 'Confirm Manager Password Reset',
+                  description: `Set a new login password for ${target.displayName} (@${target.username}).`,
+                  confirmLabel: 'Confirm Password Reset',
+                  execute: async (pw) => {
+                    await updateStaffPassword(target.staffId, nextPw, pw);
+                  },
+                });
+              }}
+              className="p-6 space-y-4"
+            >
+              <p className="text-xs text-slate-600">
+                Enter a new login password for{' '}
+                <span className="font-semibold text-slate-900">{resetPwStaff.displayName}</span>{' '}
+                (<span className="font-mono">@{resetPwStaff.username}</span>).
+              </p>
+              {resetPwError && (
+                <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700">
+                  {resetPwError}
+                </div>
+              )}
+              <div>
+                <label
+                  htmlFor="reset-mgr-pw"
+                  className="block text-xs font-semibold text-slate-700 mb-1"
+                >
+                  New Manager Password
+                </label>
+                <div className="relative">
+                  <input
+                    id="reset-mgr-pw"
+                    type={showResetPwValue ? 'text' : 'password'}
+                    autoFocus
+                    required
+                    minLength={4}
+                    maxLength={100}
+                    value={resetPwValue}
+                    onChange={(e) => setResetPwValue(e.target.value)}
+                    placeholder="Min 4 characters"
+                    className="w-full pl-3.5 pr-10 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowResetPwValue((v) => !v)}
+                    aria-label={showResetPwValue ? 'Hide password' : 'Show password'}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-700 cursor-pointer"
+                  >
+                    {showResetPwValue ? (
+                      <EyeOff className="w-4 h-4" />
+                    ) : (
+                      <Eye className="w-4 h-4" />
+                    )}
+                  </button>
+                </div>
+              </div>
+              <div className="flex justify-end gap-2.5 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setResetPwStaff(null)}
+                  className="px-4 py-2 rounded-lg border border-slate-200 text-xs font-medium text-slate-700 hover:bg-slate-50 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-lg bg-[#3749BB] text-white text-xs font-semibold hover:bg-[#2A3998] cursor-pointer"
+                >
+                  Continue
                 </button>
               </div>
             </form>

@@ -40,7 +40,9 @@ import {
 import { STARTER_PRODUCTS } from '../lib/starterCatalog';
 import {
   createCredentialUpdatePayload,
+  createStaffCredentialPayload,
   deriveAdminProofToken,
+  deriveStaffProofToken,
   generateProofNonceId,
   timingSafeEqual,
 } from '../lib/adminAuth';
@@ -56,12 +58,15 @@ import {
   type ProductInput,
 } from '../lib/validation';
 import type {
+  AdminRole,
   CartItem,
   Order,
   OrderItem,
   OrderStatus,
   PaymentMethod,
   Product,
+  StaffAccount,
+  StaffPermissions,
   UserAccess,
   UserProfile,
 } from '../types';
@@ -132,6 +137,9 @@ interface StoreContextValue {
   ) => Promise<void>;
   verifyAdminActionPassword: (adminPassword: string) => Promise<string>;
   adminUnlocked: boolean;
+  adminRole: AdminRole;
+  activeStaffAccount: StaffAccount | null;
+  staffAccounts: StaffAccount[];
   adminCredentialUsername: string;
   unlockAdminPortal: (username: string, password: string) => Promise<void>;
   lockAdminPortal: () => void;
@@ -139,6 +147,29 @@ interface StoreContextValue {
     currentPassword: string,
     newUsername: string,
     newPassword: string
+  ) => Promise<void>;
+  createStaffAccount: (
+    input: {
+      displayName: string;
+      username: string;
+      password: string;
+    } & StaffPermissions,
+    adminPassword: string
+  ) => Promise<void>;
+  updateStaffPermissions: (
+    staffId: string,
+    permissions: StaffPermissions,
+    adminPassword: string
+  ) => Promise<void>;
+  updateStaffPassword: (
+    staffId: string,
+    newPassword: string,
+    adminPassword: string
+  ) => Promise<void>;
+  setStaffStatus: (
+    staffId: string,
+    status: 'active' | 'suspended' | 'deleted',
+    adminPassword: string
   ) => Promise<void>;
 }
 
@@ -155,6 +186,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [isAdminDoc, setIsAdminDoc] = useState(false);
   const [adminProofToken, setAdminProofToken] = useState<string | null>(null);
   const [adminUnlocked, setAdminUnlocked] = useState(false);
+  const [adminRole, setAdminRole] = useState<AdminRole>('super_admin');
+  const [activeStaffAccount, setActiveStaffAccount] = useState<StaffAccount | null>(null);
+  const [staffAccounts, setStaffAccounts] = useState<StaffAccount[]>([]);
   const [adminCredentialUsername, setAdminCredentialUsername] = useState('');
 
   const [firestoreProducts, setFirestoreProducts] = useState<Product[]>([]);
@@ -375,15 +409,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         throw new Error('Admin session is locked. Unlock /admin first.');
       }
       if (!adminPassword || adminPassword.length < 4) {
-        throw new Error('Enter your admin password to confirm this change.');
+        throw new Error('Enter your password to confirm this change.');
       }
-      const derived = await deriveAdminProofToken(adminCredentialUsername, adminPassword);
+      const derived =
+        adminRole === 'manager' && activeStaffAccount
+          ? await deriveStaffProofToken(activeStaffAccount.staffId, adminPassword)
+          : await deriveAdminProofToken(adminCredentialUsername, adminPassword);
       if (!timingSafeEqual(derived, adminProofToken)) {
-        throw new Error('Incorrect admin password.');
+        throw new Error('Incorrect password.');
       }
       return derived;
     },
-    [adminUnlocked, adminProofToken, adminCredentialUsername]
+    [
+      adminUnlocked,
+      adminProofToken,
+      adminCredentialUsername,
+      adminRole,
+      activeStaffAccount,
+    ]
   );
 
   const seedStarterCatalogInternal = useCallback(
@@ -539,6 +582,66 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       unsubAccessList();
     };
   }, [authReady, isAdmin]);
+
+  // 5. Super Admin Manager Accounts list + Live Active Manager Permission Sync
+  useEffect(() => {
+    if (!authReady || !adminUnlocked || adminRole !== 'super_admin') {
+      setStaffAccounts([]);
+      return;
+    }
+    const staffQuery = query(
+      collection(db, 'staffAccounts'),
+      where('status', 'in', ['active', 'suspended'])
+    );
+    const unsub = onSnapshot(
+      staffQuery,
+      (snapshot) => {
+        const list = snapshot.docs.map((d) => d.data() as StaffAccount);
+        list.sort((a, b) => {
+          const tA = a.createdAt?.toMillis?.() ?? 0;
+          const tB = b.createdAt?.toMillis?.() ?? 0;
+          return tB - tA;
+        });
+        setStaffAccounts(list);
+      },
+      (err) => handleFirestoreError(err, OperationType.LIST, 'staffAccounts')
+    );
+    return () => unsub();
+  }, [authReady, adminUnlocked, adminRole]);
+
+  const activeStaffId = activeStaffAccount?.staffId;
+  useEffect(() => {
+    if (!authReady || !adminUnlocked || adminRole !== 'manager' || !activeStaffId) {
+      return;
+    }
+    const unsub = onSnapshot(
+      doc(db, 'staffAccounts', activeStaffId),
+      (snap) => {
+        if (!snap.exists()) {
+          setAdminProofToken(null);
+          setAdminUnlocked(false);
+          setAdminRole('super_admin');
+          setActiveStaffAccount(null);
+          setAdminCredentialUsername('');
+          showToast('Manager account is no longer active.', 'error');
+          return;
+        }
+        const data = snap.data() as StaffAccount;
+        if (!data.active || data.status !== 'active') {
+          setAdminProofToken(null);
+          setAdminUnlocked(false);
+          setAdminRole('super_admin');
+          setActiveStaffAccount(null);
+          setAdminCredentialUsername('');
+          showToast('Your manager access was suspended or revoked.', 'error');
+          return;
+        }
+        setActiveStaffAccount(data);
+      },
+      (err) => handleFirestoreError(err, OperationType.GET, `staffAccounts/${activeStaffId}`)
+    );
+    return () => unsub();
+  }, [authReady, adminUnlocked, adminRole, activeStaffId, showToast]);
 
   // Sync cart with live product stock & prices
   useEffect(() => {
@@ -860,7 +963,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [user, showToast]
   );
 
-  // Product CRUD (Admin with required password OR Permitted Storefront Editor)
+  // Product CRUD (Super Admin, Permitted Manager, or Permitted Storefront Editor)
   const saveProduct = useCallback(
     async (input: ProductInput, existingId?: string, adminPassword?: string) => {
       const errMsg = validateProductInput(input);
@@ -893,23 +996,46 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         (existingId ? Boolean(userAccess?.canEditPost) : Boolean(userAccess?.canAddPost));
 
       let proofToken: string | null = null;
+      const isManagerAction = !isPermittedUserAction && adminRole === 'manager';
       if (!isPermittedUserAction) {
+        if (isManagerAction) {
+          if (!activeStaffAccount) {
+            throw new Error('Manager session expired. Please sign in again.');
+          }
+          if (existingId && !activeStaffAccount.canEditProduct) {
+            throw new Error('You do not have permission to edit products.');
+          }
+          if (!existingId && !activeStaffAccount.canAddProduct) {
+            throw new Error('You do not have permission to add products.');
+          }
+        }
         proofToken = await verifyAdminActionPassword(adminPassword || '');
       }
 
       const batch = writeBatch(db);
       const auditId = proofToken ? generateProofNonceId() : undefined;
       if (proofToken && auditId) {
-        batch.set(doc(db, 'adminProofs', auditId), {
-          proof: proofToken,
-          createdAt: serverTimestamp(),
-        });
+        if (isManagerAction && activeStaffAccount) {
+          batch.set(doc(db, 'staffProofs', auditId), {
+            staffId: activeStaffAccount.staffId,
+            proof: proofToken,
+            createdAt: serverTimestamp(),
+          });
+        } else {
+          batch.set(doc(db, 'adminProofs', auditId), {
+            proof: proofToken,
+            createdAt: serverTimestamp(),
+          });
+        }
       }
 
       if (existingId) {
         const prodRef = doc(db, 'products', existingId);
         batch.update(prodRef, {
           ...baseData,
+          ...(isManagerAction && activeStaffAccount
+            ? { staffId: activeStaffAccount.staffId }
+            : {}),
           ...(auditId ? { auditId } : {}),
           updatedAt: serverTimestamp(),
         });
@@ -927,12 +1053,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           .slice(0, 40);
         const newId = `${slug || 'item'}-${Date.now().toString(36)}`;
         const prodRef = doc(db, 'products', newId);
+        const createdBy =
+          isPermittedUserAction && user
+            ? user.uid
+            : isManagerAction && activeStaffAccount
+              ? activeStaffAccount.staffId
+              : 'admin_portal';
         batch.set(prodRef, {
           ...baseData,
+          ...(isManagerAction && activeStaffAccount
+            ? { staffId: activeStaffAccount.staffId }
+            : {}),
           ...(auditId ? { auditId } : {}),
           soldCount: 0,
           lastOrderId: 'none',
-          createdBy: isPermittedUserAction && user ? user.uid : 'admin_portal',
+          createdBy,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });
@@ -944,24 +1079,49 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
       }
     },
-    [user, userAccess, verifyAdminActionPassword, showToast]
+    [
+      user,
+      userAccess,
+      adminRole,
+      activeStaffAccount,
+      verifyAdminActionPassword,
+      showToast,
+    ]
   );
 
   const adjustProductStock = useCallback(
     async (productId: string, newStock: number, adminPassword: string) => {
+      const isManagerAction = adminRole === 'manager';
+      if (isManagerAction && !activeStaffAccount?.canEditProduct) {
+        throw new Error('You do not have permission to edit product stock.');
+      }
       const proofToken = await verifyAdminActionPassword(adminPassword);
       const clamped = Math.max(0, Math.min(100000, Math.trunc(newStock)));
       const batch = writeBatch(db);
       const auditId = generateProofNonceId();
-      batch.set(doc(db, 'adminProofs', auditId), {
-        proof: proofToken,
-        createdAt: serverTimestamp(),
-      });
-      batch.update(doc(db, 'products', productId), {
-        stock: clamped,
-        auditId,
-        updatedAt: serverTimestamp(),
-      });
+      if (isManagerAction && activeStaffAccount) {
+        batch.set(doc(db, 'staffProofs', auditId), {
+          staffId: activeStaffAccount.staffId,
+          proof: proofToken,
+          createdAt: serverTimestamp(),
+        });
+        batch.update(doc(db, 'products', productId), {
+          stock: clamped,
+          staffId: activeStaffAccount.staffId,
+          auditId,
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        batch.set(doc(db, 'adminProofs', auditId), {
+          proof: proofToken,
+          createdAt: serverTimestamp(),
+        });
+        batch.update(doc(db, 'products', productId), {
+          stock: clamped,
+          auditId,
+          updatedAt: serverTimestamp(),
+        });
+      }
       try {
         await batch.commit();
         showToast(`Stock updated to ${clamped} units.`, 'success');
@@ -969,23 +1129,41 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         handleFirestoreError(err, OperationType.UPDATE, `products/${productId}`);
       }
     },
-    [verifyAdminActionPassword, showToast]
+    [adminRole, activeStaffAccount, verifyAdminActionPassword, showToast]
   );
 
   const deleteProduct = useCallback(
     async (productId: string, adminPassword: string) => {
+      const isManagerAction = adminRole === 'manager';
+      if (isManagerAction && !activeStaffAccount?.canDeleteProduct) {
+        throw new Error('You do not have permission to delete products.');
+      }
       const proofToken = await verifyAdminActionPassword(adminPassword);
       const batch = writeBatch(db);
       const auditId = generateProofNonceId();
-      batch.set(doc(db, 'adminProofs', auditId), {
-        proof: proofToken,
-        createdAt: serverTimestamp(),
-      });
-      batch.update(doc(db, 'products', productId), {
-        status: 'archived',
-        auditId,
-        updatedAt: serverTimestamp(),
-      });
+      if (isManagerAction && activeStaffAccount) {
+        batch.set(doc(db, 'staffProofs', auditId), {
+          staffId: activeStaffAccount.staffId,
+          proof: proofToken,
+          createdAt: serverTimestamp(),
+        });
+        batch.update(doc(db, 'products', productId), {
+          status: 'archived',
+          staffId: activeStaffAccount.staffId,
+          auditId,
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        batch.set(doc(db, 'adminProofs', auditId), {
+          proof: proofToken,
+          createdAt: serverTimestamp(),
+        });
+        batch.update(doc(db, 'products', productId), {
+          status: 'archived',
+          auditId,
+          updatedAt: serverTimestamp(),
+        });
+      }
       try {
         await batch.commit();
         showToast('Product deleted from catalog.', 'info');
@@ -993,7 +1171,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         handleFirestoreError(err, OperationType.DELETE, `products/${productId}`);
       }
     },
-    [verifyAdminActionPassword, showToast]
+    [adminRole, activeStaffAccount, verifyAdminActionPassword, showToast]
   );
 
   const updateOrderStatus = useCallback(
@@ -1003,13 +1181,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       adminPassword: string,
       notes?: string
     ) => {
+      const isManagerAction = adminRole === 'manager';
+      if (isManagerAction && !activeStaffAccount?.canManageOrders) {
+        throw new Error('You do not have permission to manage orders.');
+      }
       const proofToken = await verifyAdminActionPassword(adminPassword);
       const batch = writeBatch(db);
       const auditId = generateProofNonceId();
-      batch.set(doc(db, 'adminProofs', auditId), {
-        proof: proofToken,
-        createdAt: serverTimestamp(),
-      });
       const patch: Record<string, unknown> = {
         status,
         auditId,
@@ -1017,6 +1195,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       };
       if (typeof notes === 'string') {
         patch.notes = sanitizeText(notes, 500);
+      }
+      if (isManagerAction && activeStaffAccount) {
+        batch.set(doc(db, 'staffProofs', auditId), {
+          staffId: activeStaffAccount.staffId,
+          proof: proofToken,
+          createdAt: serverTimestamp(),
+        });
+        patch.staffId = activeStaffAccount.staffId;
+      } else {
+        batch.set(doc(db, 'adminProofs', auditId), {
+          proof: proofToken,
+          createdAt: serverTimestamp(),
+        });
       }
       batch.update(doc(db, 'orders', orderId), patch);
       try {
@@ -1026,7 +1217,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         handleFirestoreError(err, OperationType.UPDATE, `orders/${orderId}`);
       }
     },
-    [verifyAdminActionPassword, showToast]
+    [adminRole, activeStaffAccount, verifyAdminActionPassword, showToast]
   );
 
   const updateUserPostPermission = useCallback(
@@ -1040,6 +1231,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       patch: { canAddPost: boolean; canEditPost: boolean },
       adminPassword: string
     ) => {
+      if (adminRole !== 'super_admin') {
+        throw new Error('Only the main administrator can manage user permissions.');
+      }
       if (!isValidDocumentId(targetUser.uid)) {
         throw new Error('Invalid user record identifier.');
       }
@@ -1083,34 +1277,312 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         handleFirestoreError(err, OperationType.WRITE, `userAccess/${targetUser.uid}`);
       }
     },
-    [userAccessList, verifyAdminActionPassword, showToast]
+    [adminRole, userAccessList, verifyAdminActionPassword, showToast]
+  );
+
+  const createStaffAccount = useCallback(
+    async (
+      input: { displayName: string; username: string; password: string } & StaffPermissions,
+      adminPassword: string
+    ) => {
+      if (adminRole !== 'super_admin') {
+        throw new Error('Only the main administrator can add managers.');
+      }
+      const cleanName = sanitizeText(input.displayName, 80);
+      const cleanUsername = input.username.trim();
+      const staffId = cleanUsername.toLowerCase();
+      if (cleanName.length < 2) {
+        throw new Error('Manager display name must be at least 2 characters.');
+      }
+      if (
+        cleanUsername.length < 3 ||
+        cleanUsername.length > 60 ||
+        !/^[a-zA-Z0-9_-]+$/.test(cleanUsername)
+      ) {
+        throw new Error(
+          'Username must be 3–60 characters using only letters, numbers, hyphens (-), or underscores (_).'
+        );
+      }
+      if (input.password.length < 4 || input.password.length > 100) {
+        throw new Error('Manager password must be between 4 and 100 characters.');
+      }
+      if (staffAccounts.some((s) => s.staffId === staffId)) {
+        throw new Error(`Manager username "@${cleanUsername}" already exists.`);
+      }
+
+      const adminProof = await verifyAdminActionPassword(adminPassword);
+      const cred = await createStaffCredentialPayload(cleanUsername, input.password);
+      const auditId = generateProofNonceId();
+      const permissions: StaffPermissions = {
+        canAddProduct: Boolean(input.canAddProduct),
+        canEditProduct: Boolean(input.canEditProduct),
+        canDeleteProduct: Boolean(input.canDeleteProduct),
+        canManageOrders: Boolean(input.canManageOrders),
+        canViewAnalytics: Boolean(input.canViewAnalytics),
+      };
+
+      const batch = writeBatch(db);
+      batch.set(doc(db, 'adminProofs', auditId), {
+        proof: adminProof,
+        createdAt: serverTimestamp(),
+      });
+      batch.set(doc(db, 'staffSecrets', cred.staffId), {
+        staffId: cred.staffId,
+        proofHash: cred.proofHash,
+        active: true,
+        ...permissions,
+        auditId,
+        updatedAt: serverTimestamp(),
+      });
+      batch.set(doc(db, 'staffAccounts', cred.staffId), {
+        staffId: cred.staffId,
+        username: cred.username,
+        displayName: cleanName,
+        active: true,
+        status: 'active',
+        ...permissions,
+        loginCount: 0,
+        auditId,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+
+      try {
+        await batch.commit();
+        showToast(`Created manager "@${cred.username}".`, 'success');
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, `staffAccounts/${cred.staffId}`);
+      }
+    },
+    [adminRole, staffAccounts, verifyAdminActionPassword, showToast]
+  );
+
+  const updateStaffPermissions = useCallback(
+    async (
+      staffId: string,
+      permissions: StaffPermissions,
+      adminPassword: string
+    ) => {
+      if (adminRole !== 'super_admin') {
+        throw new Error('Only the main administrator can edit manager permissions.');
+      }
+      if (!isValidDocumentId(staffId)) {
+        throw new Error('Invalid manager ID.');
+      }
+      const adminProof = await verifyAdminActionPassword(adminPassword);
+      const auditId = generateProofNonceId();
+      const nextPerms: StaffPermissions = {
+        canAddProduct: Boolean(permissions.canAddProduct),
+        canEditProduct: Boolean(permissions.canEditProduct),
+        canDeleteProduct: Boolean(permissions.canDeleteProduct),
+        canManageOrders: Boolean(permissions.canManageOrders),
+        canViewAnalytics: Boolean(permissions.canViewAnalytics),
+      };
+
+      const batch = writeBatch(db);
+      batch.set(doc(db, 'adminProofs', auditId), {
+        proof: adminProof,
+        createdAt: serverTimestamp(),
+      });
+      batch.update(doc(db, 'staffSecrets', staffId), {
+        ...nextPerms,
+        auditId,
+        updatedAt: serverTimestamp(),
+      });
+      batch.update(doc(db, 'staffAccounts', staffId), {
+        ...nextPerms,
+        auditId,
+        updatedAt: serverTimestamp(),
+      });
+
+      try {
+        await batch.commit();
+        showToast('Saved manager permissions.', 'success');
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, `staffAccounts/${staffId}`);
+      }
+    },
+    [adminRole, verifyAdminActionPassword, showToast]
+  );
+
+  const updateStaffPassword = useCallback(
+    async (staffId: string, newPassword: string, adminPassword: string) => {
+      if (adminRole !== 'super_admin') {
+        throw new Error('Only the main administrator can reset manager passwords.');
+      }
+      if (!isValidDocumentId(staffId)) {
+        throw new Error('Invalid manager ID.');
+      }
+      if (newPassword.length < 4 || newPassword.length > 100) {
+        throw new Error('Password must be between 4 and 100 characters.');
+      }
+      const adminProof = await verifyAdminActionPassword(adminPassword);
+      const cred = await createStaffCredentialPayload(staffId, newPassword);
+      const auditId = generateProofNonceId();
+
+      const batch = writeBatch(db);
+      batch.set(doc(db, 'adminProofs', auditId), {
+        proof: adminProof,
+        createdAt: serverTimestamp(),
+      });
+      batch.update(doc(db, 'staffSecrets', staffId), {
+        proofHash: cred.proofHash,
+        auditId,
+        updatedAt: serverTimestamp(),
+      });
+
+      try {
+        await batch.commit();
+        showToast(`Updated password for @${staffId}.`, 'success');
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, `staffSecrets/${staffId}`);
+      }
+    },
+    [adminRole, verifyAdminActionPassword, showToast]
+  );
+
+  const setStaffStatus = useCallback(
+    async (
+      staffId: string,
+      status: 'active' | 'suspended' | 'deleted',
+      adminPassword: string
+    ) => {
+      if (adminRole !== 'super_admin') {
+        throw new Error('Only the main administrator can update manager status.');
+      }
+      if (!isValidDocumentId(staffId)) {
+        throw new Error('Invalid manager ID.');
+      }
+      const adminProof = await verifyAdminActionPassword(adminPassword);
+      const auditId = generateProofNonceId();
+      const active = status === 'active';
+
+      const batch = writeBatch(db);
+      batch.set(doc(db, 'adminProofs', auditId), {
+        proof: adminProof,
+        createdAt: serverTimestamp(),
+      });
+      batch.update(doc(db, 'staffSecrets', staffId), {
+        active,
+        auditId,
+        updatedAt: serverTimestamp(),
+      });
+      batch.update(doc(db, 'staffAccounts', staffId), {
+        active,
+        status,
+        auditId,
+        updatedAt: serverTimestamp(),
+      });
+
+      try {
+        await batch.commit();
+        const label =
+          status === 'deleted'
+            ? 'Manager account deleted.'
+            : status === 'suspended'
+              ? 'Manager account suspended.'
+              : 'Manager account activated.';
+        showToast(label, 'info');
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, `staffAccounts/${staffId}`);
+      }
+    },
+    [adminRole, verifyAdminActionPassword, showToast]
   );
 
   const unlockAdminPortal = useCallback(
     async (username: string, password: string) => {
       const cleanUser = username.trim();
       if (cleanUser.length < 3 || password.length < 4) {
-        throw new Error('Invalid admin username or password.');
+        throw new Error('Invalid username or password.');
       }
-      const token = await deriveAdminProofToken(cleanUser, password);
-      const nonceId = generateProofNonceId();
+
+      // 1. Try Super Admin credentials first
+      const adminToken = await deriveAdminProofToken(cleanUser, password);
+      const adminNonceId = generateProofNonceId();
+      let adminAccepted = false;
       try {
-        await setDoc(doc(db, 'adminProofs', nonceId), {
-          proof: token,
+        await setDoc(doc(db, 'adminProofs', adminNonceId), {
+          proof: adminToken,
+          createdAt: serverTimestamp(),
+        });
+        adminAccepted = true;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (
+          !msg.toLowerCase().includes('permission') &&
+          !msg.toLowerCase().includes('insufficient')
+        ) {
+          throw new Error('Unable to verify login. Please check your connection.');
+        }
+      }
+
+      if (adminAccepted) {
+        setAdminRole('super_admin');
+        setActiveStaffAccount(null);
+        setAdminProofToken(adminToken);
+        setAdminCredentialUsername(cleanUser);
+        setAdminUnlocked(true);
+        showToast('Admin panel unlocked.', 'success');
+        return;
+      }
+
+      // 2. Fallback to Manager / Staff credentials
+      const staffId = cleanUser.toLowerCase();
+      if (!/^[a-z0-9_-]+$/.test(staffId) || !isValidDocumentId(staffId)) {
+        throw new Error('Invalid username or password.');
+      }
+      const staffToken = await deriveStaffProofToken(staffId, password);
+      const staffNonceId = generateProofNonceId();
+      try {
+        await setDoc(doc(db, 'staffProofs', staffNonceId), {
+          staffId,
+          proof: staffToken,
           createdAt: serverTimestamp(),
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        if (msg.toLowerCase().includes('permission') || msg.toLowerCase().includes('insufficient')) {
-          throw new Error('Invalid admin username or password.');
+        if (
+          msg.toLowerCase().includes('permission') ||
+          msg.toLowerCase().includes('insufficient')
+        ) {
+          throw new Error('Invalid username or password, or account is suspended.');
         }
-        throw new Error('Unable to verify admin login. Please check your connection.');
+        throw new Error('Unable to verify manager login. Please check your connection.');
       }
 
-      setAdminProofToken(token);
-      setAdminCredentialUsername(cleanUser);
+      const staffRef = doc(db, 'staffAccounts', staffId);
+      const staffSnap = await getDoc(staffRef);
+      if (!staffSnap.exists()) {
+        throw new Error('Manager account record not found.');
+      }
+      const staffData = staffSnap.data() as StaffAccount;
+      if (!staffData.active || staffData.status !== 'active') {
+        throw new Error('This manager account is currently suspended.');
+      }
+
+      const loginNonceId = generateProofNonceId();
+      const nextLoginCount = (staffData.loginCount || 0) + 1;
+      const loginBatch = writeBatch(db);
+      loginBatch.set(doc(db, 'staffProofs', loginNonceId), {
+        staffId,
+        proof: staffToken,
+        createdAt: serverTimestamp(),
+      });
+      loginBatch.update(staffRef, {
+        loginCount: nextLoginCount,
+        lastLoginAt: serverTimestamp(),
+        auditId: loginNonceId,
+        updatedAt: serverTimestamp(),
+      });
+      await loginBatch.commit();
+
+      setAdminRole('manager');
+      setActiveStaffAccount({ ...staffData, loginCount: nextLoginCount });
+      setAdminProofToken(staffToken);
+      setAdminCredentialUsername(staffData.username);
       setAdminUnlocked(true);
-      showToast('Admin panel unlocked.', 'success');
+      showToast(`Signed in as Manager (${staffData.displayName}).`, 'success');
     },
     [showToast]
   );
@@ -1118,14 +1590,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const lockAdminPortal = useCallback(() => {
     setAdminProofToken(null);
     setAdminUnlocked(false);
+    setAdminRole('super_admin');
+    setActiveStaffAccount(null);
+    setStaffAccounts([]);
     setAdminCredentialUsername('');
     showToast('Admin panel locked.', 'info');
   }, [showToast]);
 
   const updateAdminCredentials = useCallback(
     async (currentPassword: string, newUsername: string, newPassword: string) => {
-      if (!adminUnlocked || !adminProofToken) {
-        throw new Error('Admin session is locked.');
+      if (!adminUnlocked || !adminProofToken || adminRole !== 'super_admin') {
+        throw new Error('Only the main administrator can update admin credentials.');
       }
       const cleanUser = newUsername.trim();
       if (cleanUser.length < 3 || cleanUser.length > 60) {
@@ -1164,7 +1639,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         handleFirestoreError(err, OperationType.UPDATE, 'adminConfig/credentials');
       }
     },
-    [adminUnlocked, adminProofToken, adminCredentialUsername, showToast]
+    [adminUnlocked, adminProofToken, adminRole, adminCredentialUsername, showToast]
   );
 
   const value: StoreContextValue = {
@@ -1203,10 +1678,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     updateUserPostPermission,
     verifyAdminActionPassword,
     adminUnlocked,
+    adminRole,
+    activeStaffAccount,
+    staffAccounts,
     adminCredentialUsername,
     unlockAdminPortal,
     lockAdminPortal,
     updateAdminCredentials,
+    createStaffAccount,
+    updateStaffPermissions,
+    updateStaffPassword,
+    setStaffStatus,
   };
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;

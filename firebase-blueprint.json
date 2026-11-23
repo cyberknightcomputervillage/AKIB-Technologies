@@ -143,6 +143,11 @@
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$"
         },
+        "staffId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
         "createdBy": {
           "type": "string",
           "minLength": 1,
@@ -249,6 +254,11 @@
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$"
         },
+        "staffId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time"
@@ -323,6 +333,172 @@
         }
       },
       "required": ["username", "proofHash", "auditId", "updatedAt"]
+    },
+    "StaffProof": {
+      "title": "StaffProof",
+      "description": "Write-only one-time proof token authorizing a manager login or permitted write.",
+      "type": "object",
+      "properties": {
+        "staffId": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 60,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "proof": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[a-f0-9]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["staffId", "proof", "createdAt"]
+    },
+    "StaffSecret": {
+      "title": "StaffSecret",
+      "description": "Non-readable server-enforced credential hash and permission flags per manager account.",
+      "type": "object",
+      "properties": {
+        "staffId": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 60,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "proofHash": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[a-f0-9]+$"
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "canAddProduct": {
+          "type": "boolean"
+        },
+        "canEditProduct": {
+          "type": "boolean"
+        },
+        "canDeleteProduct": {
+          "type": "boolean"
+        },
+        "canManageOrders": {
+          "type": "boolean"
+        },
+        "canViewAnalytics": {
+          "type": "boolean"
+        },
+        "auditId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "staffId",
+        "proofHash",
+        "active",
+        "canAddProduct",
+        "canEditProduct",
+        "canDeleteProduct",
+        "canManageOrders",
+        "canViewAnalytics",
+        "auditId",
+        "updatedAt"
+      ]
+    },
+    "StaffAccount": {
+      "title": "StaffAccount",
+      "description": "Manager account directory with login tracking and checkbox permissions (no secrets stored).",
+      "type": "object",
+      "properties": {
+        "staffId": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 60,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "username": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 60,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["active", "suspended", "deleted"]
+        },
+        "canAddProduct": {
+          "type": "boolean"
+        },
+        "canEditProduct": {
+          "type": "boolean"
+        },
+        "canDeleteProduct": {
+          "type": "boolean"
+        },
+        "canManageOrders": {
+          "type": "boolean"
+        },
+        "canViewAnalytics": {
+          "type": "boolean"
+        },
+        "loginCount": {
+          "type": "integer"
+        },
+        "auditId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "lastLoginAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "staffId",
+        "username",
+        "displayName",
+        "active",
+        "status",
+        "canAddProduct",
+        "canEditProduct",
+        "canDeleteProduct",
+        "canManageOrders",
+        "canViewAnalytics",
+        "loginCount",
+        "auditId",
+        "createdAt",
+        "updatedAt"
+      ]
     },
     "UserAccess": {
       "title": "UserAccess",
@@ -408,6 +584,24 @@
         "$ref": "#/entities/AdminCredential"
       },
       "description": "Non-readable admin portal credential proof hash and changeable username."
+    },
+    "/staffProofs/{proofId}": {
+      "schema": {
+        "$ref": "#/entities/StaffProof"
+      },
+      "description": "Write-only one-time batch proof documents authorizing manager logins and writes."
+    },
+    "/staffSecrets/{staffId}": {
+      "schema": {
+        "$ref": "#/entities/StaffSecret"
+      },
+      "description": "Non-readable manager credential hash and authoritative permission flags."
+    },
+    "/staffAccounts/{staffId}": {
+      "schema": {
+        "$ref": "#/entities/StaffAccount"
+      },
+      "description": "Manager profile metadata, login counts, and UI capability flags."
     },
     "/userAccess/{userId}": {
       "schema": {

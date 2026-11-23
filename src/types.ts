@@ -66,6 +66,28 @@ export interface UserAccess {
   updatedAt?: Timestamp;
 }
 
+export interface StaffPermissions {
+  canAddProduct: boolean;
+  canEditProduct: boolean;
+  canDeleteProduct: boolean;
+  canManageOrders: boolean;
+  canViewAnalytics: boolean;
+}
+
+export interface StaffAccount extends StaffPermissions {
+  staffId: string;
+  username: string;
+  displayName: string;
+  active: boolean;
+  status: 'active' | 'suspended' | 'deleted';
+  loginCount: number;
+  lastLoginAt?: Timestamp;
+  createdAt?: Timestamp;
+  updatedAt?: Timestamp;
+}
+
+export type AdminRole = 'super_admin' | 'manager';
+
 export type PaymentMethod = 'cod' | 'card_on_delivery' | 'bank_transfer';
 
 export type OrderStatus = 'pending' | 'processing' | 'shipped' | 'delivered' | 'cancelled';
