@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { ArrowLeft, Eye, EyeOff, Lock } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 
@@ -14,6 +14,7 @@ export function AdminLoginGate({ onBackToStore }: AdminLoginGateProps) {
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const passwordInputRef = useRef<HTMLInputElement | null>(null);
 
   const attemptLogin = async () => {
     if (submitting) return;
@@ -22,7 +23,7 @@ export function AdminLoginGate({ onBackToStore }: AdminLoginGateProps) {
     try {
       await unlockAdminPortal(username, password);
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'Invalid admin username or password.');
+      setErrorMsg(err instanceof Error ? err.message : 'Invalid username or password.');
     } finally {
       setSubmitting(false);
     }
@@ -33,7 +34,14 @@ export function AdminLoginGate({ onBackToStore }: AdminLoginGateProps) {
     void attemptLogin();
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  const handleUsernameKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      passwordInputRef.current?.focus();
+    }
+  };
+
+  const handlePasswordKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       e.preventDefault();
       void attemptLogin();
@@ -57,7 +65,7 @@ export function AdminLoginGate({ onBackToStore }: AdminLoginGateProps) {
         </div>
 
         <div className="p-6 space-y-5">
-          {/* Username & Password Form (Enter key supported) */}
+          {/* Username & Password Form (Enter moves to password, Enter in password signs in) */}
           <form onSubmit={handleSubmit} className="space-y-4">
             {errorMsg && (
               <div
@@ -83,7 +91,7 @@ export function AdminLoginGate({ onBackToStore }: AdminLoginGateProps) {
                 autoComplete="username"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                onKeyDown={handleKeyDown}
+                onKeyDown={handleUsernameKeyDown}
                 placeholder="Enter admin or manager username"
                 className="w-full px-3.5 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
               />
@@ -98,13 +106,14 @@ export function AdminLoginGate({ onBackToStore }: AdminLoginGateProps) {
               </label>
               <div className="relative">
                 <input
+                  ref={passwordInputRef}
                   id="admin-password"
                   type={showPassword ? 'text' : 'password'}
                   required
                   autoComplete="current-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  onKeyDown={handleKeyDown}
+                  onKeyDown={handlePasswordKeyDown}
                   placeholder="Enter password"
                   className="w-full pl-3.5 pr-10 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#3749BB]"
                 />
@@ -128,7 +137,7 @@ export function AdminLoginGate({ onBackToStore }: AdminLoginGateProps) {
             </button>
 
             <p className="text-[11px] text-center text-slate-400">
-              Press Enter to sign in
+              Enter on username moves to password · Enter on password signs in
             </p>
           </form>
 
