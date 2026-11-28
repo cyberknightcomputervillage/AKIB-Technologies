@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   BarChart3,
+  Boxes,
   CheckCircle2,
   Eye,
   EyeOff,
@@ -43,6 +44,7 @@ import {
   type StaffPermissions,
 } from '../types';
 import { ProductImage } from './ProductImage';
+import { ErpSystemWorkspace } from './ErpSystemWorkspace';
 
 interface AdminConsoleProps {
   onBackToStore: () => void;
@@ -670,6 +672,15 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
     }
     if (perms.canManageOrders) {
       list.push({ id: 'orders', label: 'Orders', icon: ShoppingCart });
+    }
+    if (
+      isSuperAdmin ||
+      perms.canAddProduct ||
+      perms.canEditProduct ||
+      perms.canManageOrders ||
+      perms.canViewAnalytics
+    ) {
+      list.push({ id: 'erp', label: 'ERP System', icon: Boxes });
     }
     if (isSuperAdmin) {
       list.push({ id: 'users', label: 'Managers & Users', icon: Users });
@@ -1866,6 +1877,14 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
                 </div>
               )}
             </div>
+          )}
+
+          {/* ERP SYSTEM WORKSPACE */}
+          {activeTab === 'erp' && (
+            <ErpSystemWorkspace
+              requestPasswordConfirm={requestPasswordConfirm}
+              onNavigateTab={setActiveTab}
+            />
           )}
 
           {/* TAB 4: MANAGERS (ADD USERNAME/PASSWORD + CHECKBOXES) & TRACKED USERS */}

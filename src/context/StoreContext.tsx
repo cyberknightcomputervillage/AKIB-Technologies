@@ -60,6 +60,16 @@ import {
 import type {
   AdminRole,
   CartItem,
+  ErpBranch,
+  ErpCustomer,
+  ErpModel,
+  ErpPurchase,
+  ErpPurchaseItem,
+  ErpReturn,
+  ErpSale,
+  ErpSaleItem,
+  ErpSerial,
+  ErpVendor,
   Order,
   OrderItem,
   OrderStatus,
@@ -171,6 +181,89 @@ interface StoreContextValue {
     status: 'active' | 'suspended' | 'deleted',
     adminPassword: string
   ) => Promise<void>;
+  erpBranches: ErpBranch[];
+  erpVendors: ErpVendor[];
+  erpCustomers: ErpCustomer[];
+  erpModels: ErpModel[];
+  erpSerials: ErpSerial[];
+  erpPurchases: ErpPurchase[];
+  erpSales: ErpSale[];
+  erpReturns: ErpReturn[];
+  saveErpBranch: (
+    input: { name: string; location: string; phone: string; status?: 'active' | 'archived' },
+    existingId: string | undefined,
+    adminPassword: string
+  ) => Promise<void>;
+  saveErpVendor: (
+    input: {
+      name: string;
+      company: string;
+      phone: string;
+      email: string;
+      address: string;
+      notes: string;
+      status?: 'active' | 'archived';
+    },
+    existingId: string | undefined,
+    adminPassword: string
+  ) => Promise<void>;
+  saveErpCustomer: (
+    input: {
+      name: string;
+      company: string;
+      phone: string;
+      email: string;
+      address: string;
+      city: string;
+      notes: string;
+      status?: 'active' | 'archived';
+    },
+    existingId: string | undefined,
+    adminPassword: string
+  ) => Promise<void>;
+  saveErpModel: (
+    input: {
+      brand: string;
+      modelName: string;
+      productName: string;
+      category: string;
+      defaultBuyPrice: number;
+      defaultSellPrice: number;
+      warranty: string;
+      status?: 'active' | 'archived';
+    },
+    existingId: string | undefined,
+    adminPassword: string
+  ) => Promise<void>;
+  createErpPurchase: (
+    input: {
+      invoiceNumber: string;
+      vendorId: string;
+      branchId: string;
+      notes: string;
+      items: { modelId: string; unitCost: number; serialNumbers: string[] }[];
+    },
+    adminPassword: string
+  ) => Promise<void>;
+  createErpPurchaseReturn: (
+    input: { serialId: string; reason: string },
+    adminPassword: string
+  ) => Promise<void>;
+  createErpSale: (
+    input: {
+      invoiceNumber: string;
+      customerId: string;
+      branchId: string;
+      salespersonId: string;
+      notes: string;
+      items: { serialId: string; unitPrice: number }[];
+    },
+    adminPassword: string
+  ) => Promise<void>;
+  createErpSalesReturn: (
+    input: { serialId: string; reason: string },
+    adminPassword: string
+  ) => Promise<void>;
 }
 
 const StoreContext = createContext<StoreContextValue | undefined>(undefined);
@@ -196,6 +289,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [orders, setOrders] = useState<Order[]>([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [customers, setCustomers] = useState<UserProfile[]>([]);
+
+  const [erpBranches, setErpBranches] = useState<ErpBranch[]>([]);
+  const [erpVendors, setErpVendors] = useState<ErpVendor[]>([]);
+  const [erpCustomers, setErpCustomers] = useState<ErpCustomer[]>([]);
+  const [erpModels, setErpModels] = useState<ErpModel[]>([]);
+  const [erpSerials, setErpSerials] = useState<ErpSerial[]>([]);
+  const [erpPurchases, setErpPurchases] = useState<ErpPurchase[]>([]);
+  const [erpSales, setErpSales] = useState<ErpSale[]>([]);
+  const [erpReturns, setErpReturns] = useState<ErpReturn[]>([]);
 
   const [cart, setCart] = useState<CartItem[]>(() => {
     try {
@@ -583,16 +685,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     };
   }, [authReady, isAdmin]);
 
-  // 5. Super Admin Manager Accounts list + Live Active Manager Permission Sync
+  // 5. Manager Accounts list (Super Admin sees active/suspended; Managers see active staff for ERP salesperson dropdown)
   useEffect(() => {
-    if (!authReady || !adminUnlocked || adminRole !== 'super_admin') {
+    if (!authReady || !adminUnlocked) {
       setStaffAccounts([]);
       return;
     }
-    const staffQuery = query(
-      collection(db, 'staffAccounts'),
-      where('status', 'in', ['active', 'suspended'])
-    );
+    const staffQuery =
+      adminRole === 'super_admin'
+        ? query(collection(db, 'staffAccounts'), where('status', 'in', ['active', 'suspended']))
+        : query(collection(db, 'staffAccounts'), where('status', '==', 'active'));
     const unsub = onSnapshot(
       staffQuery,
       (snapshot) => {
@@ -608,6 +710,113 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     );
     return () => unsub();
   }, [authReady, adminUnlocked, adminRole]);
+
+  // 5b. ERP Real-Time Listeners (when /admin is unlocked)
+  useEffect(() => {
+    if (!authReady || !adminUnlocked) {
+      setErpBranches([]);
+      setErpVendors([]);
+      setErpCustomers([]);
+      setErpModels([]);
+      setErpSerials([]);
+      setErpPurchases([]);
+      setErpSales([]);
+      setErpReturns([]);
+      return;
+    }
+
+    const unsubs = [
+      onSnapshot(
+        query(collection(db, 'erpBranches'), where('status', 'in', ['active', 'archived'])),
+        (snap) => {
+          const list = snap.docs.map((d) => d.data() as ErpBranch);
+          list.sort((a, b) => a.name.localeCompare(b.name));
+          setErpBranches(list);
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, 'erpBranches')
+      ),
+      onSnapshot(
+        query(collection(db, 'erpVendors'), where('status', 'in', ['active', 'archived'])),
+        (snap) => {
+          const list = snap.docs.map((d) => d.data() as ErpVendor);
+          list.sort((a, b) => a.name.localeCompare(b.name));
+          setErpVendors(list);
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, 'erpVendors')
+      ),
+      onSnapshot(
+        query(collection(db, 'erpCustomers'), where('status', 'in', ['active', 'archived'])),
+        (snap) => {
+          const list = snap.docs.map((d) => d.data() as ErpCustomer);
+          list.sort((a, b) => a.name.localeCompare(b.name));
+          setErpCustomers(list);
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, 'erpCustomers')
+      ),
+      onSnapshot(
+        query(collection(db, 'erpModels'), where('status', 'in', ['active', 'archived'])),
+        (snap) => {
+          const list = snap.docs.map((d) => d.data() as ErpModel);
+          list.sort((a, b) => a.productName.localeCompare(b.productName));
+          setErpModels(list);
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, 'erpModels')
+      ),
+      onSnapshot(
+        query(
+          collection(db, 'erpSerials'),
+          where('status', 'in', ['in_stock', 'sold', 'purchase_returned'])
+        ),
+        (snap) => {
+          const list = snap.docs.map((d) => d.data() as ErpSerial);
+          list.sort((a, b) => {
+            const tA = a.updatedAt?.toMillis?.() ?? 0;
+            const tB = b.updatedAt?.toMillis?.() ?? 0;
+            return tB - tA;
+          });
+          setErpSerials(list);
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, 'erpSerials')
+      ),
+      onSnapshot(
+        query(
+          collection(db, 'erpPurchases'),
+          where('status', 'in', ['completed', 'partial_return', 'returned'])
+        ),
+        (snap) => {
+          const list = snap.docs.map((d) => d.data() as ErpPurchase);
+          list.sort((a, b) => b.purchaseDateIso.localeCompare(a.purchaseDateIso));
+          setErpPurchases(list);
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, 'erpPurchases')
+      ),
+      onSnapshot(
+        query(
+          collection(db, 'erpSales'),
+          where('status', 'in', ['completed', 'partial_return', 'returned'])
+        ),
+        (snap) => {
+          const list = snap.docs.map((d) => d.data() as ErpSale);
+          list.sort((a, b) => b.saleDateIso.localeCompare(a.saleDateIso));
+          setErpSales(list);
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, 'erpSales')
+      ),
+      onSnapshot(
+        query(collection(db, 'erpReturns'), where('status', '==', 'completed')),
+        (snap) => {
+          const list = snap.docs.map((d) => d.data() as ErpReturn);
+          list.sort((a, b) => b.returnDateIso.localeCompare(a.returnDateIso));
+          setErpReturns(list);
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, 'erpReturns')
+      ),
+    ];
+
+    return () => {
+      for (const u of unsubs) u();
+    };
+  }, [authReady, adminUnlocked]);
 
   const activeStaffId = activeStaffAccount?.staffId;
   useEffect(() => {
@@ -1642,6 +1851,976 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [adminUnlocked, adminProofToken, adminRole, adminCredentialUsername, showToast]
   );
 
+  // ---------------------------------------------------------
+  // ERP System Mutations
+  // ---------------------------------------------------------
+  const buildErpProof = useCallback(
+    (batch: ReturnType<typeof writeBatch>, proofToken: string): { auditId: string; staffId?: string } => {
+      const auditId = generateProofNonceId();
+      if (adminRole === 'manager' && activeStaffAccount) {
+        batch.set(doc(db, 'staffProofs', auditId), {
+          staffId: activeStaffAccount.staffId,
+          proof: proofToken,
+          createdAt: serverTimestamp(),
+        });
+        return { auditId, staffId: activeStaffAccount.staffId };
+      }
+      batch.set(doc(db, 'adminProofs', auditId), {
+        proof: proofToken,
+        createdAt: serverTimestamp(),
+      });
+      return { auditId };
+    },
+    [adminRole, activeStaffAccount]
+  );
+
+  const assertErpSetupPermission = useCallback(() => {
+    if (adminRole === 'manager') {
+      if (!activeStaffAccount || (!activeStaffAccount.canAddProduct && !activeStaffAccount.canEditProduct)) {
+        throw new Error('Manager permission "Add Products" or "Edit Products & Stock" is required.');
+      }
+    }
+  }, [adminRole, activeStaffAccount]);
+
+  const assertErpOrderPermission = useCallback(() => {
+    if (adminRole === 'manager') {
+      if (!activeStaffAccount || !activeStaffAccount.canManageOrders) {
+        throw new Error('Manager permission "Manage Orders" is required.');
+      }
+    }
+  }, [adminRole, activeStaffAccount]);
+
+  const assertErpAnyPermission = useCallback(() => {
+    if (adminRole === 'manager') {
+      if (
+        !activeStaffAccount ||
+        (!activeStaffAccount.canAddProduct &&
+          !activeStaffAccount.canEditProduct &&
+          !activeStaffAccount.canManageOrders)
+      ) {
+        throw new Error('Insufficient manager permissions for this ERP action.');
+      }
+    }
+  }, [adminRole, activeStaffAccount]);
+
+  const makeErpId = (prefix: string, label: string) => {
+    const slug = label
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '')
+      .slice(0, 28);
+    return `${prefix}_${slug || 'item'}_${Date.now().toString(36).slice(-5)}`.slice(0, 58);
+  };
+
+  const getLocalMonth = (d: Date) => {
+    const yr = d.getFullYear();
+    const mo = String(d.getMonth() + 1).padStart(2, '0');
+    return `${yr}-${mo}`;
+  };
+
+  const saveErpBranch = useCallback(
+    async (
+      input: { name: string; location: string; phone: string; status?: 'active' | 'archived' },
+      existingId: string | undefined,
+      adminPassword: string
+    ) => {
+      assertErpSetupPermission();
+      const name = sanitizeText(input.name, 80);
+      const location = sanitizeText(input.location, 120);
+      const phone = sanitizeText(input.phone, 40);
+      if (name.length < 2) throw new Error('Branch name must be at least 2 characters.');
+      if (location.length < 2) throw new Error('Branch location must be at least 2 characters.');
+
+      const proofToken = await verifyAdminActionPassword(adminPassword);
+      const batch = writeBatch(db);
+      const meta = buildErpProof(batch, proofToken);
+      const branchId = existingId || makeErpId('br', name);
+      const ref = doc(db, 'erpBranches', branchId);
+
+      if (existingId) {
+        batch.update(ref, {
+          name,
+          location,
+          phone,
+          status: input.status || 'active',
+          ...meta,
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        batch.set(ref, {
+          branchId,
+          name,
+          location,
+          phone,
+          status: input.status || 'active',
+          ...meta,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+
+      try {
+        await batch.commit();
+        showToast(existingId ? `Updated branch "${name}".` : `Added branch "${name}".`, 'success');
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, `erpBranches/${branchId}`);
+      }
+    },
+    [assertErpSetupPermission, verifyAdminActionPassword, buildErpProof, showToast]
+  );
+
+  const saveErpVendor = useCallback(
+    async (
+      input: {
+        name: string;
+        company: string;
+        phone: string;
+        email: string;
+        address: string;
+        notes: string;
+        status?: 'active' | 'archived';
+      },
+      existingId: string | undefined,
+      adminPassword: string
+    ) => {
+      assertErpSetupPermission();
+      const name = sanitizeText(input.name, 100);
+      if (name.length < 2) throw new Error('Vendor name must be at least 2 characters.');
+
+      const proofToken = await verifyAdminActionPassword(adminPassword);
+      const batch = writeBatch(db);
+      const meta = buildErpProof(batch, proofToken);
+      const vendorId = existingId || makeErpId('vnd', name);
+      const ref = doc(db, 'erpVendors', vendorId);
+
+      const fields = {
+        name,
+        company: sanitizeText(input.company, 100),
+        phone: sanitizeText(input.phone, 40),
+        email: sanitizeText(input.email, 160),
+        address: sanitizeText(input.address, 240),
+        notes: sanitizeText(input.notes, 300),
+        status: input.status || 'active',
+      };
+
+      if (existingId) {
+        batch.update(ref, {
+          ...fields,
+          ...meta,
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        batch.set(ref, {
+          vendorId,
+          ...fields,
+          ...meta,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+
+      try {
+        await batch.commit();
+        showToast(existingId ? `Updated vendor "${name}".` : `Added vendor "${name}".`, 'success');
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, `erpVendors/${vendorId}`);
+      }
+    },
+    [assertErpSetupPermission, verifyAdminActionPassword, buildErpProof, showToast]
+  );
+
+  const saveErpCustomer = useCallback(
+    async (
+      input: {
+        name: string;
+        company: string;
+        phone: string;
+        email: string;
+        address: string;
+        city: string;
+        notes: string;
+        status?: 'active' | 'archived';
+      },
+      existingId: string | undefined,
+      adminPassword: string
+    ) => {
+      assertErpAnyPermission();
+      const name = sanitizeText(input.name, 100);
+      if (name.length < 2) throw new Error('Customer name must be at least 2 characters.');
+
+      const proofToken = await verifyAdminActionPassword(adminPassword);
+      const batch = writeBatch(db);
+      const meta = buildErpProof(batch, proofToken);
+      const customerId = existingId || makeErpId('cus', name);
+      const ref = doc(db, 'erpCustomers', customerId);
+
+      const fields = {
+        name,
+        company: sanitizeText(input.company, 100),
+        phone: sanitizeText(input.phone, 40),
+        email: sanitizeText(input.email, 160),
+        address: sanitizeText(input.address, 240),
+        city: sanitizeText(input.city, 80),
+        notes: sanitizeText(input.notes, 300),
+        status: input.status || 'active',
+      };
+
+      if (existingId) {
+        batch.update(ref, {
+          ...fields,
+          ...meta,
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        batch.set(ref, {
+          customerId,
+          ...fields,
+          ...meta,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+
+      try {
+        await batch.commit();
+        showToast(
+          existingId ? `Updated customer "${name}".` : `Added customer "${name}".`,
+          'success'
+        );
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, `erpCustomers/${customerId}`);
+      }
+    },
+    [assertErpAnyPermission, verifyAdminActionPassword, buildErpProof, showToast]
+  );
+
+  const saveErpModel = useCallback(
+    async (
+      input: {
+        brand: string;
+        modelName: string;
+        productName: string;
+        category: string;
+        defaultBuyPrice: number;
+        defaultSellPrice: number;
+        warranty: string;
+        status?: 'active' | 'archived';
+      },
+      existingId: string | undefined,
+      adminPassword: string
+    ) => {
+      assertErpSetupPermission();
+      const brand = sanitizeText(input.brand, 60);
+      const modelName = sanitizeText(input.modelName, 80);
+      const productName = sanitizeText(input.productName, 160);
+      const category = sanitizeText(input.category, 40) || 'Laptops';
+      const defaultBuyPrice = Math.max(0, Number(input.defaultBuyPrice || 0));
+      const defaultSellPrice = Math.max(0, Number(input.defaultSellPrice || 0));
+      const warranty = sanitizeText(input.warranty, 80);
+
+      if (brand.length < 1) throw new Error('Brand is required.');
+      if (modelName.length < 1) throw new Error('Model code/name is required.');
+      if (productName.length < 2) throw new Error('Product name must be at least 2 characters.');
+
+      if (!existingId) {
+        const dup = erpModels.find(
+          (m) =>
+            m.status === 'active' &&
+            m.brand.toLowerCase() === brand.toLowerCase() &&
+            m.modelName.toLowerCase() === modelName.toLowerCase()
+        );
+        if (dup) {
+          throw new Error(
+            `Model "${brand} ${modelName}" already exists under "${dup.productName}". Purchase into that model so stock consolidates under one name.`
+          );
+        }
+      }
+
+      const proofToken = await verifyAdminActionPassword(adminPassword);
+      const batch = writeBatch(db);
+      const meta = buildErpProof(batch, proofToken);
+      const modelId = existingId || makeErpId('mod', `${brand}-${modelName}`);
+      const ref = doc(db, 'erpModels', modelId);
+
+      const fields = {
+        brand,
+        modelName,
+        productName,
+        category,
+        defaultBuyPrice,
+        defaultSellPrice,
+        warranty,
+        status: input.status || 'active',
+      };
+
+      if (existingId) {
+        batch.update(ref, {
+          ...fields,
+          ...meta,
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        batch.set(ref, {
+          modelId,
+          ...fields,
+          ...meta,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+
+      try {
+        await batch.commit();
+        showToast(
+          existingId
+            ? `Updated setup model "${productName}".`
+            : `Added setup model "${productName}".`,
+          'success'
+        );
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, `erpModels/${modelId}`);
+      }
+    },
+    [assertErpSetupPermission, erpModels, verifyAdminActionPassword, buildErpProof, showToast]
+  );
+
+  const createErpPurchase = useCallback(
+    async (
+      input: {
+        invoiceNumber: string;
+        vendorId: string;
+        branchId: string;
+        notes: string;
+        items: { modelId: string; unitCost: number; serialNumbers: string[] }[];
+      },
+      adminPassword: string
+    ) => {
+      assertErpSetupPermission();
+      const invoiceNumber = sanitizeText(input.invoiceNumber, 60);
+      if (invoiceNumber.length < 2) throw new Error('Purchase invoice number is required.');
+
+      const vendor = erpVendors.find((v) => v.vendorId === input.vendorId && v.status === 'active');
+      if (!vendor) throw new Error('Select a valid active Vendor from Setup.');
+      const branch = erpBranches.find((b) => b.branchId === input.branchId && b.status === 'active');
+      if (!branch) throw new Error('Select a valid active Branch from Setup.');
+      if (!input.items || input.items.length === 0) {
+        throw new Error('Add at least one model and serial number to purchase.');
+      }
+
+      const existingSerialSet = new Set(erpSerials.map((s) => s.serialNumber.trim().toLowerCase()));
+      const existingSerialIdSet = new Set(erpSerials.map((s) => s.serialId));
+      const seenInBatch = new Set<string>();
+
+      const now = new Date();
+      const nowIso = now.toISOString();
+      const nowMs = now.getTime();
+      const purchaseId = `pur_${nowMs.toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+      const operatorName =
+        adminRole === 'manager' && activeStaffAccount
+          ? activeStaffAccount.displayName
+          : adminCredentialUsername || 'Admin';
+      const notes = sanitizeText(input.notes, 300);
+
+      const purchaseItems: ErpPurchaseItem[] = [];
+      const serialDocs: Omit<ErpSerial, 'createdAt' | 'updatedAt'>[] = [];
+      let totalAmount = 0;
+      let totalUnits = 0;
+
+      for (const line of input.items) {
+        const model = erpModels.find((m) => m.modelId === line.modelId && m.status === 'active');
+        if (!model) throw new Error('One of the selected models is invalid or archived.');
+        const unitCost = Math.max(0, Number(line.unitCost || 0));
+        const cleanSerials = line.serialNumbers
+          .map((s) => sanitizeText(s, 80))
+          .filter((s) => s.length > 0);
+        if (cleanSerials.length === 0) {
+          throw new Error(`Enter at least one serial number for "${model.productName}".`);
+        }
+
+        for (const sn of cleanSerials) {
+          if (sn.length < 2) {
+            throw new Error(`Serial "${sn}" must be at least 2 characters.`);
+          }
+          const lower = sn.toLowerCase();
+          if (seenInBatch.has(lower)) {
+            throw new Error(`Duplicate serial number "${sn}" inside this purchase.`);
+          }
+          if (existingSerialSet.has(lower)) {
+            throw new Error(`Serial number "${sn}" already exists in ERP records.`);
+          }
+          const serialIdSlug = sn
+            .toLowerCase()
+            .replace(/[^a-z0-9_-]+/g, '-')
+            .replace(/^-|-$/g, '')
+            .slice(0, 68);
+          const serialId =
+            serialIdSlug.length >= 2 && !existingSerialIdSet.has(serialIdSlug)
+              ? serialIdSlug
+              : `sn_${serialIdSlug || 'unit'}_${Math.random().toString(36).slice(2, 6)}`;
+          if (existingSerialIdSet.has(serialId)) {
+            throw new Error(`Serial ID collision for "${sn}". Please use a distinct serial.`);
+          }
+          seenInBatch.add(lower);
+          existingSerialIdSet.add(serialId);
+
+          serialDocs.push({
+            serialId,
+            serialNumber: sn,
+            modelId: model.modelId,
+            productName: model.productName,
+            brand: model.brand,
+            modelName: model.modelName,
+            branchId: branch.branchId,
+            branchName: branch.name,
+            vendorId: vendor.vendorId,
+            vendorName: vendor.name,
+            purchaseId,
+            purchaseInvoice: invoiceNumber,
+            purchaseCost: unitCost,
+            salePrice: model.defaultSellPrice,
+            status: 'in_stock',
+            lastSaleId: 'none',
+            lastSaleInvoice: 'none',
+            lastCustomerId: 'none',
+            lastCustomerName: 'none',
+            salespersonId: 'none',
+            salespersonName: 'none',
+            purchasedAtIso: nowIso,
+            history: [
+              {
+                type: 'PURCHASE',
+                timestampIso: nowIso,
+                timestampMs: nowMs,
+                refId: purchaseId,
+                invoiceNumber,
+                partyName: vendor.name,
+                branchName: branch.name,
+                salespersonName: operatorName,
+                amount: unitCost,
+                profit: 0,
+                notes: notes || `Purchased from ${vendor.name} into ${branch.name}`,
+              },
+            ],
+          });
+        }
+
+        const lineTotal = unitCost * cleanSerials.length;
+        totalAmount += lineTotal;
+        totalUnits += cleanSerials.length;
+        purchaseItems.push({
+          modelId: model.modelId,
+          productName: model.productName,
+          brand: model.brand,
+          modelName: model.modelName,
+          quantity: cleanSerials.length,
+          unitCost,
+          lineTotal,
+          serialNumbers: cleanSerials,
+        });
+      }
+
+      const proofToken = await verifyAdminActionPassword(adminPassword);
+
+      // Chunk writes so each batch stays well below Firestore's 20-lookup per-batch rules cap
+      try {
+        const firstBatch = writeBatch(db);
+        const firstMeta = buildErpProof(firstBatch, proofToken);
+        firstBatch.set(doc(db, 'erpPurchases', purchaseId), {
+          purchaseId,
+          invoiceNumber,
+          vendorId: vendor.vendorId,
+          vendorName: vendor.name,
+          branchId: branch.branchId,
+          branchName: branch.name,
+          items: purchaseItems,
+          totalAmount,
+          totalUnits,
+          notes,
+          status: 'completed',
+          createdByName: sanitizeText(operatorName, 80) || 'Admin',
+          purchaseDateIso: nowIso,
+          ...firstMeta,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+
+        const firstChunk = serialDocs.slice(0, 2);
+        for (const sDoc of firstChunk) {
+          firstBatch.set(doc(db, 'erpSerials', sDoc.serialId), {
+            ...sDoc,
+            ...firstMeta,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+        }
+        await firstBatch.commit();
+
+        for (let idx = 2; idx < serialDocs.length; idx += 3) {
+          const chunk = serialDocs.slice(idx, idx + 3);
+          const chunkBatch = writeBatch(db);
+          const chunkMeta = buildErpProof(chunkBatch, proofToken);
+          for (const sDoc of chunk) {
+            chunkBatch.set(doc(db, 'erpSerials', sDoc.serialId), {
+              ...sDoc,
+              ...chunkMeta,
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+            });
+          }
+          await chunkBatch.commit();
+        }
+
+        showToast(
+          `Purchase #${invoiceNumber} recorded: +${totalUnits} unit(s) added to ${branch.name} stock.`,
+          'success'
+        );
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, `erpPurchases/${purchaseId}`);
+      }
+    },
+    [
+      assertErpSetupPermission,
+      erpVendors,
+      erpBranches,
+      erpModels,
+      erpSerials,
+      adminRole,
+      activeStaffAccount,
+      adminCredentialUsername,
+      verifyAdminActionPassword,
+      buildErpProof,
+      showToast,
+    ]
+  );
+
+  const createErpPurchaseReturn = useCallback(
+    async (input: { serialId: string; reason: string }, adminPassword: string) => {
+      assertErpAnyPermission();
+      const serial = erpSerials.find((s) => s.serialId === input.serialId);
+      if (!serial) throw new Error('Serial record not found.');
+      if (serial.status !== 'in_stock') {
+        throw new Error('Only currently In-Stock serials can be Purchase Returned to the vendor.');
+      }
+
+      const proofToken = await verifyAdminActionPassword(adminPassword);
+      const now = new Date();
+      const nowIso = now.toISOString();
+      const nowMs = now.getTime();
+      const returnId = `pret_${nowMs.toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+      const returnNumber = `PR-${nowMs.toString().slice(-6)}`;
+      const reason = sanitizeText(input.reason, 300) || 'Returned to vendor';
+      const operatorName =
+        adminRole === 'manager' && activeStaffAccount
+          ? activeStaffAccount.displayName
+          : adminCredentialUsername || 'Admin';
+
+      const batch = writeBatch(db);
+      const meta = buildErpProof(batch, proofToken);
+
+      const nextHistory = [
+        ...(serial.history || []).slice(0, 48),
+        {
+          type: 'PURCHASE_RETURN' as const,
+          timestampIso: nowIso,
+          timestampMs: nowMs,
+          refId: returnId,
+          invoiceNumber: returnNumber,
+          partyName: serial.vendorName,
+          branchName: serial.branchName,
+          salespersonName: operatorName,
+          amount: serial.purchaseCost,
+          profit: 0,
+          notes: reason,
+        },
+      ];
+
+      batch.update(doc(db, 'erpSerials', serial.serialId), {
+        status: 'purchase_returned',
+        history: nextHistory,
+        ...meta,
+        updatedAt: serverTimestamp(),
+      });
+
+      const purchase = erpPurchases.find((p) => p.purchaseId === serial.purchaseId);
+      if (purchase) {
+        const siblingSerials = erpSerials.filter((s) => s.purchaseId === purchase.purchaseId);
+        const remainingInBatch = siblingSerials.filter(
+          (s) => s.serialId !== serial.serialId && s.status !== 'purchase_returned'
+        );
+        batch.update(doc(db, 'erpPurchases', purchase.purchaseId), {
+          status: remainingInBatch.length === 0 ? 'returned' : 'partial_return',
+          ...meta,
+          updatedAt: serverTimestamp(),
+        });
+      }
+
+      batch.set(doc(db, 'erpReturns', returnId), {
+        returnId,
+        returnNumber,
+        returnType: 'purchase_return',
+        serialId: serial.serialId,
+        serialNumber: serial.serialNumber,
+        modelId: serial.modelId,
+        productName: serial.productName,
+        branchId: serial.branchId,
+        branchName: serial.branchName,
+        partyId: serial.vendorId,
+        partyName: serial.vendorName,
+        refInvoiceNumber: serial.purchaseInvoice,
+        amount: serial.purchaseCost,
+        profitAdjustment: 0,
+        salespersonId: adminRole === 'manager' && activeStaffAccount ? activeStaffAccount.staffId : 'admin',
+        salespersonName: operatorName,
+        reason,
+        returnMonth: getLocalMonth(now),
+        returnDateIso: nowIso,
+        status: 'completed',
+        ...meta,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+
+      try {
+        await batch.commit();
+        showToast(
+          `Purchase Return ${returnNumber} completed for serial ${serial.serialNumber}.`,
+          'info'
+        );
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, `erpReturns/${returnId}`);
+      }
+    },
+    [
+      assertErpAnyPermission,
+      erpSerials,
+      erpPurchases,
+      adminRole,
+      activeStaffAccount,
+      adminCredentialUsername,
+      verifyAdminActionPassword,
+      buildErpProof,
+      showToast,
+    ]
+  );
+
+  const createErpSale = useCallback(
+    async (
+      input: {
+        invoiceNumber: string;
+        customerId: string;
+        branchId: string;
+        salespersonId: string;
+        notes: string;
+        items: { serialId: string; unitPrice: number }[];
+      },
+      adminPassword: string
+    ) => {
+      assertErpOrderPermission();
+      const invoiceNumber = sanitizeText(input.invoiceNumber, 60);
+      if (invoiceNumber.length < 2) throw new Error('Sales invoice number is required.');
+
+      const customer = erpCustomers.find(
+        (c) => c.customerId === input.customerId && c.status === 'active'
+      );
+      if (!customer) throw new Error('Select a valid active Customer from Setup.');
+
+      const branch = erpBranches.find((b) => b.branchId === input.branchId && b.status === 'active');
+      if (!branch) throw new Error('Select a valid active Branch from Setup.');
+
+      const salesperson = staffAccounts.find(
+        (s) => s.staffId === input.salespersonId && s.status === 'active'
+      );
+      if (!salesperson) {
+        throw new Error(
+          'Select a valid active Manager as Sales Person (must come from stored Manager accounts).'
+        );
+      }
+
+      if (!input.items || input.items.length === 0) {
+        throw new Error('Select at least one in-stock serial to sell.');
+      }
+
+      const now = new Date();
+      const nowIso = now.toISOString();
+      const nowMs = now.getTime();
+      const saleId = `sal_${nowMs.toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+      const notes = sanitizeText(input.notes, 300);
+
+      const seenSerials = new Set<string>();
+      const saleItems: ErpSaleItem[] = [];
+      const serialUpdates: { serial: ErpSerial; unitPrice: number; profit: number }[] = [];
+      let totalRevenue = 0;
+      let totalCost = 0;
+      let totalProfit = 0;
+
+      for (const line of input.items) {
+        if (seenSerials.has(line.serialId)) {
+          throw new Error('Duplicate serial selected on the same sales invoice.');
+        }
+        seenSerials.add(line.serialId);
+
+        const serial = erpSerials.find((s) => s.serialId === line.serialId);
+        if (!serial) throw new Error('Selected serial number was not found.');
+        if (serial.status !== 'in_stock') {
+          throw new Error(`Serial "${serial.serialNumber}" is not in stock.`);
+        }
+        if (serial.branchId !== branch.branchId) {
+          throw new Error(
+            `Serial "${serial.serialNumber}" is in branch "${serial.branchName}", not "${branch.name}".`
+          );
+        }
+
+        const unitPrice = Math.max(0, Number(line.unitPrice || 0));
+        const unitCost = serial.purchaseCost;
+        const profit = unitPrice - unitCost;
+        totalRevenue += unitPrice;
+        totalCost += unitCost;
+        totalProfit += profit;
+
+        saleItems.push({
+          serialId: serial.serialId,
+          serialNumber: serial.serialNumber,
+          modelId: serial.modelId,
+          productName: serial.productName,
+          brand: serial.brand,
+          modelName: serial.modelName,
+          unitCost,
+          unitPrice,
+          profit,
+          returned: false,
+        });
+        serialUpdates.push({ serial, unitPrice, profit });
+      }
+
+      const proofToken = await verifyAdminActionPassword(adminPassword);
+
+      try {
+        const firstBatch = writeBatch(db);
+        const firstMeta = buildErpProof(firstBatch, proofToken);
+
+        firstBatch.set(doc(db, 'erpSales', saleId), {
+          saleId,
+          invoiceNumber,
+          customerId: customer.customerId,
+          customerName: customer.name,
+          branchId: branch.branchId,
+          branchName: branch.name,
+          salespersonId: salesperson.staffId,
+          salespersonUsername: salesperson.username,
+          salespersonName: salesperson.displayName,
+          items: saleItems,
+          totalRevenue,
+          totalCost,
+          totalProfit,
+          totalUnits: saleItems.length,
+          returnedUnits: 0,
+          returnedRevenue: 0,
+          returnedProfit: 0,
+          saleMonth: getLocalMonth(now),
+          saleDateIso: nowIso,
+          notes,
+          status: 'completed',
+          ...firstMeta,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+
+        const buildSerialSalePatch = (
+          upd: { serial: ErpSerial; unitPrice: number; profit: number },
+          meta: { auditId: string; staffId?: string }
+        ) => ({
+          salePrice: upd.unitPrice,
+          status: 'sold' as const,
+          lastSaleId: saleId,
+          lastSaleInvoice: invoiceNumber,
+          lastCustomerId: customer.customerId,
+          lastCustomerName: customer.name,
+          salespersonId: salesperson.staffId,
+          salespersonName: salesperson.displayName,
+          history: [
+            ...(upd.serial.history || []).slice(0, 48),
+            {
+              type: 'SALE' as const,
+              timestampIso: nowIso,
+              timestampMs: nowMs,
+              refId: saleId,
+              invoiceNumber,
+              partyName: customer.name,
+              branchName: branch.name,
+              salespersonName: salesperson.displayName,
+              amount: upd.unitPrice,
+              profit: upd.profit,
+              notes: notes || `Sold to ${customer.name} by ${salesperson.displayName}`,
+            },
+          ],
+          ...meta,
+          updatedAt: serverTimestamp(),
+        });
+
+        for (const upd of serialUpdates.slice(0, 2)) {
+          firstBatch.update(
+            doc(db, 'erpSerials', upd.serial.serialId),
+            buildSerialSalePatch(upd, firstMeta)
+          );
+        }
+        await firstBatch.commit();
+
+        for (let idx = 2; idx < serialUpdates.length; idx += 3) {
+          const chunk = serialUpdates.slice(idx, idx + 3);
+          const chunkBatch = writeBatch(db);
+          const chunkMeta = buildErpProof(chunkBatch, proofToken);
+          for (const upd of chunk) {
+            chunkBatch.update(
+              doc(db, 'erpSerials', upd.serial.serialId),
+              buildSerialSalePatch(upd, chunkMeta)
+            );
+          }
+          await chunkBatch.commit();
+        }
+
+        showToast(
+          `Sale #${invoiceNumber} saved (${saleItems.length} unit(s), Profit ৳${Math.round(totalProfit).toLocaleString()}).`,
+          'success'
+        );
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, `erpSales/${saleId}`);
+      }
+    },
+    [
+      assertErpOrderPermission,
+      erpCustomers,
+      erpBranches,
+      staffAccounts,
+      erpSerials,
+      verifyAdminActionPassword,
+      buildErpProof,
+      showToast,
+    ]
+  );
+
+  const createErpSalesReturn = useCallback(
+    async (input: { serialId: string; reason: string }, adminPassword: string) => {
+      assertErpOrderPermission();
+      const serial = erpSerials.find((s) => s.serialId === input.serialId);
+      if (!serial) throw new Error('Serial record not found.');
+      if (serial.status !== 'sold') {
+        throw new Error('Only currently Sold serials can be processed as a Sales Return.');
+      }
+
+      const sale = erpSales.find((s) => s.saleId === serial.lastSaleId);
+      const saleItem = sale?.items.find((i) => i.serialId === serial.serialId && !i.returned);
+      const refundAmount = saleItem ? saleItem.unitPrice : serial.salePrice;
+      const reversedProfit = saleItem ? saleItem.profit : serial.salePrice - serial.purchaseCost;
+
+      const proofToken = await verifyAdminActionPassword(adminPassword);
+      const now = new Date();
+      const nowIso = now.toISOString();
+      const nowMs = now.getTime();
+      const returnId = `sret_${nowMs.toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+      const returnNumber = `SR-${nowMs.toString().slice(-6)}`;
+      const reason = sanitizeText(input.reason, 300) || 'Customer sales return (restocked)';
+      const operatorName =
+        adminRole === 'manager' && activeStaffAccount
+          ? activeStaffAccount.displayName
+          : adminCredentialUsername || 'Admin';
+
+      const batch = writeBatch(db);
+      const meta = buildErpProof(batch, proofToken);
+
+      batch.update(doc(db, 'erpSerials', serial.serialId), {
+        status: 'in_stock',
+        history: [
+          ...(serial.history || []).slice(0, 48),
+          {
+            type: 'SALES_RETURN' as const,
+            timestampIso: nowIso,
+            timestampMs: nowMs,
+            refId: returnId,
+            invoiceNumber: returnNumber,
+            partyName: serial.lastCustomerName || 'Customer',
+            branchName: serial.branchName,
+            salespersonName: serial.salespersonName || operatorName,
+            amount: refundAmount,
+            profit: -reversedProfit,
+            notes: reason,
+          },
+        ],
+        ...meta,
+        updatedAt: serverTimestamp(),
+      });
+
+      if (sale) {
+        const updatedItems = sale.items.map((item) =>
+          item.serialId === serial.serialId ? { ...item, returned: true } : item
+        );
+        const returnedUnits = updatedItems.filter((i) => i.returned).length;
+        const returnedRevenue = updatedItems
+          .filter((i) => i.returned)
+          .reduce((sum, i) => sum + i.unitPrice, 0);
+        const returnedProfit = updatedItems
+          .filter((i) => i.returned)
+          .reduce((sum, i) => sum + i.profit, 0);
+
+        batch.update(doc(db, 'erpSales', sale.saleId), {
+          items: updatedItems,
+          returnedUnits,
+          returnedRevenue,
+          returnedProfit,
+          status: returnedUnits >= sale.totalUnits ? 'returned' : 'partial_return',
+          ...meta,
+          updatedAt: serverTimestamp(),
+        });
+      }
+
+      batch.set(doc(db, 'erpReturns', returnId), {
+        returnId,
+        returnNumber,
+        returnType: 'sales_return',
+        serialId: serial.serialId,
+        serialNumber: serial.serialNumber,
+        modelId: serial.modelId,
+        productName: serial.productName,
+        branchId: serial.branchId,
+        branchName: serial.branchName,
+        partyId: serial.lastCustomerId || 'customer',
+        partyName: serial.lastCustomerName || 'Customer',
+        refInvoiceNumber: serial.lastSaleInvoice || 'N/A',
+        amount: refundAmount,
+        profitAdjustment: -reversedProfit,
+        salespersonId: serial.salespersonId || 'none',
+        salespersonName: serial.salespersonName || operatorName,
+        reason,
+        returnMonth: getLocalMonth(now),
+        returnDateIso: nowIso,
+        status: 'completed',
+        ...meta,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+
+      try {
+        await batch.commit();
+        showToast(
+          `Sales Return ${returnNumber} completed: serial ${serial.serialNumber} is back in stock.`,
+          'success'
+        );
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, `erpReturns/${returnId}`);
+      }
+    },
+    [
+      assertErpOrderPermission,
+      erpSerials,
+      erpSales,
+      adminRole,
+      activeStaffAccount,
+      adminCredentialUsername,
+      verifyAdminActionPassword,
+      buildErpProof,
+      showToast,
+    ]
+  );
+
   const value: StoreContextValue = {
     user,
     userProfile,
@@ -1689,6 +2868,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     updateStaffPermissions,
     updateStaffPassword,
     setStaffStatus,
+    erpBranches,
+    erpVendors,
+    erpCustomers,
+    erpModels,
+    erpSerials,
+    erpPurchases,
+    erpSales,
+    erpReturns,
+    saveErpBranch,
+    saveErpVendor,
+    saveErpCustomer,
+    saveErpModel,
+    createErpPurchase,
+    createErpPurchaseReturn,
+    createErpSale,
+    createErpSalesReturn,
   };
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;

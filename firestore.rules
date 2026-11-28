@@ -96,6 +96,58 @@ service cloud.firestore {
       );
     }
 
+    function isValidStaffErpAnyBatch(staffId, auditId) {
+      return isValidId(staffId)
+        && isValidId(auditId)
+        && getAfter(/databases/$(database)/documents/staffProofs/$(auditId)).data.staffId == staffId
+        && getAfter(/databases/$(database)/documents/staffProofs/$(auditId)).data.createdAt == request.time
+        && get(/databases/$(database)/documents/staffSecrets/$(staffId)).data.active == true
+        && (
+          get(/databases/$(database)/documents/staffSecrets/$(staffId)).data.canAddProduct == true ||
+          get(/databases/$(database)/documents/staffSecrets/$(staffId)).data.canEditProduct == true ||
+          get(/databases/$(database)/documents/staffSecrets/$(staffId)).data.canManageOrders == true
+        );
+    }
+
+    function isValidStaffErpSetupBatch(staffId, auditId) {
+      return isValidId(staffId)
+        && isValidId(auditId)
+        && getAfter(/databases/$(database)/documents/staffProofs/$(auditId)).data.staffId == staffId
+        && getAfter(/databases/$(database)/documents/staffProofs/$(auditId)).data.createdAt == request.time
+        && get(/databases/$(database)/documents/staffSecrets/$(staffId)).data.active == true
+        && (
+          get(/databases/$(database)/documents/staffSecrets/$(staffId)).data.canAddProduct == true ||
+          get(/databases/$(database)/documents/staffSecrets/$(staffId)).data.canEditProduct == true
+        );
+    }
+
+    function isValidStaffErpOrderBatch(staffId, auditId) {
+      return isValidId(staffId)
+        && isValidId(auditId)
+        && getAfter(/databases/$(database)/documents/staffProofs/$(auditId)).data.staffId == staffId
+        && getAfter(/databases/$(database)/documents/staffProofs/$(auditId)).data.createdAt == request.time
+        && get(/databases/$(database)/documents/staffSecrets/$(staffId)).data.active == true
+        && get(/databases/$(database)/documents/staffSecrets/$(staffId)).data.canManageOrders == true;
+    }
+
+    function isAuthorizedErpSetup(data) {
+      return isAdmin()
+        || (!('staffId' in data) && isValidAdminProofBatch(data.auditId))
+        || (('staffId' in data) && isValidStaffErpSetupBatch(data.staffId, data.auditId));
+    }
+
+    function isAuthorizedErpOrder(data) {
+      return isAdmin()
+        || (!('staffId' in data) && isValidAdminProofBatch(data.auditId))
+        || (('staffId' in data) && isValidStaffErpOrderBatch(data.staffId, data.auditId));
+    }
+
+    function isAuthorizedErpAny(data) {
+      return isAdmin()
+        || (!('staffId' in data) && isValidAdminProofBatch(data.auditId))
+        || (('staffId' in data) && isValidStaffErpAnyBatch(data.staffId, data.auditId));
+    }
+
     function canUserAddPost() {
       return isVerifiedUser()
         && exists(/databases/$(database)/documents/userAccess/$(request.auth.uid))
@@ -318,6 +370,246 @@ service cloud.firestore {
         && data.notes is string && data.notes.size() <= 500
         && (!('auditId' in data) || isValidId(data.auditId))
         && (!('staffId' in data) || isValidId(data.staffId))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // ---------------------------------------------------------
+    // ERP Validation Blueprints (hasOnly + per-field type checks enforce exact schema)
+    // ---------------------------------------------------------
+    function isValidErpBranch(data) {
+      return data.keys().hasOnly(['branchId', 'name', 'location', 'phone', 'status', 'auditId', 'staffId', 'createdAt', 'updatedAt'])
+        && isValidId(data.branchId) && data.branchId.size() <= 60
+        && data.name is string && data.name.size() >= 2 && data.name.size() <= 80
+        && data.location is string && data.location.size() >= 2 && data.location.size() <= 120
+        && data.phone is string && data.phone.size() <= 40
+        && data.status in ['active', 'archived']
+        && isValidId(data.auditId)
+        && (!('staffId' in data) || isValidId(data.staffId))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidErpVendor(data) {
+      return data.keys().hasOnly(['vendorId', 'name', 'company', 'phone', 'email', 'address', 'notes', 'status', 'auditId', 'staffId', 'createdAt', 'updatedAt'])
+        && isValidId(data.vendorId) && data.vendorId.size() <= 60
+        && data.name is string && data.name.size() >= 2 && data.name.size() <= 100
+        && data.company is string && data.company.size() <= 100
+        && data.phone is string && data.phone.size() <= 40
+        && data.email is string && data.email.size() <= 160
+        && data.address is string && data.address.size() <= 240
+        && data.notes is string && data.notes.size() <= 300
+        && data.status in ['active', 'archived']
+        && isValidId(data.auditId)
+        && (!('staffId' in data) || isValidId(data.staffId))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidErpCustomer(data) {
+      return data.keys().hasOnly(['customerId', 'name', 'company', 'phone', 'email', 'address', 'city', 'notes', 'status', 'auditId', 'staffId', 'createdAt', 'updatedAt'])
+        && isValidId(data.customerId) && data.customerId.size() <= 60
+        && data.name is string && data.name.size() >= 2 && data.name.size() <= 100
+        && data.company is string && data.company.size() <= 100
+        && data.phone is string && data.phone.size() <= 40
+        && data.email is string && data.email.size() <= 160
+        && data.address is string && data.address.size() <= 240
+        && data.city is string && data.city.size() <= 80
+        && data.notes is string && data.notes.size() <= 300
+        && data.status in ['active', 'archived']
+        && isValidId(data.auditId)
+        && (!('staffId' in data) || isValidId(data.staffId))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidErpModel(data) {
+      return data.keys().hasOnly([
+          'modelId', 'brand', 'modelName', 'productName', 'category',
+          'defaultBuyPrice', 'defaultSellPrice', 'warranty', 'status', 'auditId', 'staffId', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.modelId) && data.modelId.size() <= 80
+        && data.brand is string && data.brand.size() >= 1 && data.brand.size() <= 60
+        && data.modelName is string && data.modelName.size() >= 1 && data.modelName.size() <= 80
+        && data.productName is string && data.productName.size() >= 2 && data.productName.size() <= 160
+        && data.category is string && data.category.size() >= 2 && data.category.size() <= 40
+        && data.defaultBuyPrice is number && data.defaultBuyPrice >= 0 && data.defaultBuyPrice <= 10000000
+        && data.defaultSellPrice is number && data.defaultSellPrice >= 0 && data.defaultSellPrice <= 10000000
+        && data.warranty is string && data.warranty.size() <= 80
+        && data.status in ['active', 'archived']
+        && isValidId(data.auditId)
+        && (!('staffId' in data) || isValidId(data.staffId))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidErpSerial(data) {
+      return data.keys().hasOnly([
+          'serialId', 'serialNumber', 'modelId', 'productName', 'brand', 'modelName',
+          'branchId', 'branchName', 'vendorId', 'vendorName', 'purchaseId', 'purchaseInvoice',
+          'purchaseCost', 'salePrice', 'status', 'lastSaleId', 'lastSaleInvoice',
+          'lastCustomerId', 'lastCustomerName', 'salespersonId', 'salespersonName',
+          'history', 'auditId', 'staffId', 'purchasedAtIso', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.serialId) && data.serialId.size() <= 80
+        && data.serialNumber is string && data.serialNumber.size() >= 2 && data.serialNumber.size() <= 80
+        && data.modelId is string && data.modelId.size() <= 80
+        && data.productName is string && data.productName.size() <= 160
+        && data.brand is string && data.brand.size() <= 60
+        && data.modelName is string && data.modelName.size() <= 80
+        && data.branchId is string && data.branchId.size() <= 60
+        && data.branchName is string && data.branchName.size() <= 80
+        && data.vendorId is string && data.vendorId.size() <= 60
+        && data.vendorName is string && data.vendorName.size() <= 100
+        && data.purchaseId is string && data.purchaseId.size() <= 128
+        && data.purchaseInvoice is string && data.purchaseInvoice.size() <= 60
+        && data.purchaseCost is number && data.purchaseCost >= 0 && data.purchaseCost <= 10000000
+        && data.salePrice is number && data.salePrice >= 0 && data.salePrice <= 10000000
+        && data.status in ['in_stock', 'sold', 'purchase_returned']
+        && data.lastSaleId is string && data.lastSaleId.size() <= 128
+        && data.lastSaleInvoice is string && data.lastSaleInvoice.size() <= 60
+        && data.lastCustomerId is string && data.lastCustomerId.size() <= 60
+        && data.lastCustomerName is string && data.lastCustomerName.size() <= 100
+        && data.salespersonId is string && data.salespersonId.size() <= 60
+        && data.salespersonName is string && data.salespersonName.size() <= 80
+        && data.history is list && data.history.size() >= 1 && data.history.size() <= 50
+        && data.history[0] is map
+        && data.history[0].keys().hasOnly([
+          'type', 'timestampIso', 'timestampMs', 'refId', 'invoiceNumber',
+          'partyName', 'branchName', 'salespersonName', 'amount', 'profit', 'notes'
+        ])
+        && data.history[0].type in ['PURCHASE', 'SALE', 'PURCHASE_RETURN', 'SALES_RETURN']
+        && data.history[0].timestampIso is string && data.history[0].timestampIso.size() <= 40
+        && data.history[0].timestampMs is int && data.history[0].timestampMs > 0
+        && data.history[0].refId is string && data.history[0].refId.size() <= 128
+        && data.history[0].invoiceNumber is string && data.history[0].invoiceNumber.size() <= 60
+        && data.history[0].partyName is string && data.history[0].partyName.size() <= 100
+        && data.history[0].branchName is string && data.history[0].branchName.size() <= 80
+        && data.history[0].salespersonName is string && data.history[0].salespersonName.size() <= 80
+        && data.history[0].amount is number
+        && data.history[0].profit is number
+        && data.history[0].notes is string && data.history[0].notes.size() <= 240
+        && isValidId(data.auditId)
+        && (!('staffId' in data) || (data.staffId is string && data.staffId.size() <= 60))
+        && data.purchasedAtIso is string && data.purchasedAtIso.size() <= 40
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidErpPurchase(data) {
+      return data.keys().hasOnly([
+          'purchaseId', 'invoiceNumber', 'vendorId', 'vendorName', 'branchId', 'branchName',
+          'items', 'totalAmount', 'totalUnits', 'notes', 'status', 'createdByName',
+          'purchaseDateIso', 'auditId', 'staffId', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.purchaseId) && data.purchaseId.size() <= 128
+        && data.invoiceNumber is string && data.invoiceNumber.size() >= 2 && data.invoiceNumber.size() <= 60
+        && data.vendorId is string && data.vendorId.size() <= 60
+        && data.vendorName is string && data.vendorName.size() <= 100
+        && data.branchId is string && data.branchId.size() <= 60
+        && data.branchName is string && data.branchName.size() <= 80
+        && data.items is list && data.items.size() >= 1 && data.items.size() <= 50
+        && data.items[0] is map
+        && data.items[0].keys().hasOnly(['modelId', 'productName', 'brand', 'modelName', 'quantity', 'unitCost', 'lineTotal', 'serialNumbers'])
+        && data.items[0].modelId is string
+        && data.items[0].productName is string
+        && data.items[0].brand is string
+        && data.items[0].modelName is string
+        && data.items[0].quantity is int && data.items[0].quantity >= 1 && data.items[0].quantity <= 100
+        && data.items[0].unitCost is number && data.items[0].unitCost >= 0
+        && data.items[0].lineTotal is number && data.items[0].lineTotal >= 0
+        && data.items[0].serialNumbers is list && data.items[0].serialNumbers.size() >= 1 && data.items[0].serialNumbers.size() <= 100
+        && data.totalAmount is number && data.totalAmount >= 0 && data.totalAmount <= 1000000000
+        && data.totalUnits is int && data.totalUnits >= 1 && data.totalUnits <= 500
+        && data.notes is string && data.notes.size() <= 300
+        && data.status in ['completed', 'partial_return', 'returned']
+        && data.createdByName is string && data.createdByName.size() <= 80
+        && data.purchaseDateIso is string && data.purchaseDateIso.size() <= 40
+        && isValidId(data.auditId)
+        && (!('staffId' in data) || (data.staffId is string && data.staffId.size() <= 60))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidErpSale(data) {
+      return data.keys().hasOnly([
+          'saleId', 'invoiceNumber', 'customerId', 'customerName', 'branchId', 'branchName',
+          'salespersonId', 'salespersonUsername', 'salespersonName', 'items',
+          'totalRevenue', 'totalCost', 'totalProfit', 'totalUnits',
+          'returnedUnits', 'returnedRevenue', 'returnedProfit',
+          'saleMonth', 'saleDateIso', 'notes', 'status', 'auditId', 'staffId', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.saleId) && data.saleId.size() <= 128
+        && data.invoiceNumber is string && data.invoiceNumber.size() >= 2 && data.invoiceNumber.size() <= 60
+        && data.customerId is string && data.customerId.size() <= 60
+        && data.customerName is string && data.customerName.size() <= 100
+        && data.branchId is string && data.branchId.size() <= 60
+        && data.branchName is string && data.branchName.size() <= 80
+        && isValidId(data.salespersonId) && data.salespersonId.size() <= 60
+        && data.salespersonUsername is string && data.salespersonUsername.size() <= 60
+        && data.salespersonName is string && data.salespersonName.size() <= 80
+        && data.items is list && data.items.size() >= 1 && data.items.size() <= 50
+        && data.items[0] is map
+        && data.items[0].keys().hasOnly([
+          'serialId', 'serialNumber', 'modelId', 'productName', 'brand', 'modelName',
+          'unitCost', 'unitPrice', 'profit', 'returned'
+        ])
+        && data.items[0].serialId is string
+        && data.items[0].serialNumber is string
+        && data.items[0].modelId is string
+        && data.items[0].productName is string
+        && data.items[0].brand is string
+        && data.items[0].modelName is string
+        && data.items[0].unitCost is number && data.items[0].unitCost >= 0
+        && data.items[0].unitPrice is number && data.items[0].unitPrice >= 0
+        && data.items[0].profit is number
+        && data.items[0].returned is bool
+        && data.totalRevenue is number && data.totalRevenue >= 0 && data.totalRevenue <= 1000000000
+        && data.totalCost is number && data.totalCost >= 0 && data.totalCost <= 1000000000
+        && data.totalProfit is number
+        && data.totalUnits is int && data.totalUnits >= 1 && data.totalUnits <= 500
+        && data.returnedUnits is int && data.returnedUnits >= 0 && data.returnedUnits <= data.totalUnits
+        && data.returnedRevenue is number && data.returnedRevenue >= 0 && data.returnedRevenue <= data.totalRevenue
+        && data.returnedProfit is number
+        && data.saleMonth is string && data.saleMonth.size() == 7
+        && data.saleDateIso is string && data.saleDateIso.size() <= 40
+        && data.notes is string && data.notes.size() <= 300
+        && data.status in ['completed', 'partial_return', 'returned']
+        && isValidId(data.auditId)
+        && (!('staffId' in data) || (data.staffId is string && data.staffId.size() <= 60))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidErpReturn(data) {
+      return data.keys().hasOnly([
+          'returnId', 'returnNumber', 'returnType', 'serialId', 'serialNumber', 'modelId', 'productName',
+          'branchId', 'branchName', 'partyId', 'partyName', 'refInvoiceNumber',
+          'amount', 'profitAdjustment', 'salespersonId', 'salespersonName', 'reason',
+          'returnMonth', 'returnDateIso', 'status', 'auditId', 'staffId', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.returnId) && data.returnId.size() <= 128
+        && data.returnNumber is string && data.returnNumber.size() >= 2 && data.returnNumber.size() <= 60
+        && data.returnType in ['purchase_return', 'sales_return']
+        && data.serialId is string && data.serialId.size() <= 80
+        && data.serialNumber is string && data.serialNumber.size() <= 80
+        && data.modelId is string && data.modelId.size() <= 80
+        && data.productName is string && data.productName.size() <= 160
+        && data.branchId is string && data.branchId.size() <= 60
+        && data.branchName is string && data.branchName.size() <= 80
+        && data.partyId is string && data.partyId.size() <= 60
+        && data.partyName is string && data.partyName.size() <= 100
+        && data.refInvoiceNumber is string && data.refInvoiceNumber.size() <= 60
+        && data.amount is number && data.amount >= 0 && data.amount <= 100000000
+        && data.profitAdjustment is number
+        && data.salespersonId is string && data.salespersonId.size() <= 60
+        && data.salespersonName is string && data.salespersonName.size() <= 80
+        && data.reason is string && data.reason.size() <= 300
+        && data.returnMonth is string && data.returnMonth.size() == 7
+        && data.returnDateIso is string && data.returnDateIso.size() <= 40
+        && data.status == 'completed'
+        && isValidId(data.auditId)
+        && (!('staffId' in data) || (data.staffId is string && data.staffId.size() <= 60))
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
@@ -630,6 +922,164 @@ service cloud.firestore {
           )
         );
       allow delete: if false;
+    }
+
+    // ---------------------------------------------------------
+    // ERP Collections
+    // ---------------------------------------------------------
+    match /erpBranches/{branchId} {
+      allow get: if isValidId(branchId) && (existing().status in ['active', 'archived'] || isAdmin());
+      allow list: if resource.data.status in ['active', 'archived'] || isAdmin();
+      allow create: if isValidId(branchId) && isValidErpBranch(incoming())
+        && incoming().branchId == branchId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && isAuthorizedErpSetup(incoming());
+      allow update: if isValidId(branchId) && isValidErpBranch(incoming())
+        && incoming().branchId == existing().branchId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'location', 'phone', 'status', 'staffId', 'auditId', 'updatedAt'])
+        && isAuthorizedErpSetup(incoming());
+      allow delete: if false;
+    }
+
+    match /erpVendors/{vendorId} {
+      allow get: if isValidId(vendorId) && (existing().status in ['active', 'archived'] || isAdmin());
+      allow list: if resource.data.status in ['active', 'archived'] || isAdmin();
+      allow create: if isValidId(vendorId) && isValidErpVendor(incoming())
+        && incoming().vendorId == vendorId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && isAuthorizedErpSetup(incoming());
+      allow update: if isValidId(vendorId) && isValidErpVendor(incoming())
+        && incoming().vendorId == existing().vendorId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'company', 'phone', 'email', 'address', 'notes', 'status', 'staffId', 'auditId', 'updatedAt'])
+        && isAuthorizedErpSetup(incoming());
+      allow delete: if false;
+    }
+
+    match /erpCustomers/{customerId} {
+      allow get: if isValidId(customerId) && (existing().status in ['active', 'archived'] || isAdmin());
+      allow list: if resource.data.status in ['active', 'archived'] || isAdmin();
+      allow create: if isValidId(customerId) && isValidErpCustomer(incoming())
+        && incoming().customerId == customerId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && isAuthorizedErpAny(incoming());
+      allow update: if isValidId(customerId) && isValidErpCustomer(incoming())
+        && incoming().customerId == existing().customerId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'company', 'phone', 'email', 'address', 'city', 'notes', 'status', 'staffId', 'auditId', 'updatedAt'])
+        && isAuthorizedErpAny(incoming());
+      allow delete: if false;
+    }
+
+    match /erpModels/{modelId} {
+      allow get: if isValidId(modelId) && (existing().status in ['active', 'archived'] || isAdmin());
+      allow list: if resource.data.status in ['active', 'archived'] || isAdmin();
+      allow create: if isValidId(modelId) && isValidErpModel(incoming())
+        && incoming().modelId == modelId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && isAuthorizedErpSetup(incoming());
+      allow update: if isValidId(modelId) && isValidErpModel(incoming())
+        && incoming().modelId == existing().modelId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'brand', 'modelName', 'productName', 'category',
+          'defaultBuyPrice', 'defaultSellPrice', 'warranty', 'status', 'staffId', 'auditId', 'updatedAt'
+        ])
+        && isAuthorizedErpSetup(incoming());
+      allow delete: if false;
+    }
+
+    match /erpSerials/{serialId} {
+      allow get: if isValidId(serialId) && (existing().status in ['in_stock', 'sold', 'purchase_returned'] || isAdmin());
+      allow list: if resource.data.status in ['in_stock', 'sold', 'purchase_returned'] || isAdmin();
+      allow create: if isValidId(serialId) && isValidErpSerial(incoming())
+        && incoming().serialId == serialId
+        && incoming().status == 'in_stock'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && isAuthorizedErpSetup(incoming());
+      allow update: if isValidId(serialId) && isValidErpSerial(incoming())
+        && incoming().serialId == existing().serialId
+        && incoming().serialNumber == existing().serialNumber
+        && incoming().modelId == existing().modelId
+        && incoming().purchaseId == existing().purchaseId
+        && incoming().purchaseCost == existing().purchaseCost
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().history.size() >= existing().history.size()
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'branchId', 'branchName', 'salePrice', 'status',
+          'lastSaleId', 'lastSaleInvoice', 'lastCustomerId', 'lastCustomerName',
+          'salespersonId', 'salespersonName', 'history', 'staffId', 'auditId', 'updatedAt'
+        ])
+        && isAuthorizedErpAny(incoming());
+      allow delete: if false;
+    }
+
+    match /erpPurchases/{purchaseId} {
+      allow get: if isValidId(purchaseId) && (existing().status in ['completed', 'partial_return', 'returned'] || isAdmin());
+      allow list: if resource.data.status in ['completed', 'partial_return', 'returned'] || isAdmin();
+      allow create: if isValidId(purchaseId) && isValidErpPurchase(incoming())
+        && incoming().purchaseId == purchaseId
+        && incoming().status == 'completed'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && isAuthorizedErpSetup(incoming());
+      allow update: if isValidId(purchaseId) && isValidErpPurchase(incoming())
+        && incoming().purchaseId == existing().purchaseId
+        && incoming().vendorId == existing().vendorId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'notes', 'staffId', 'auditId', 'updatedAt'])
+        && isAuthorizedErpAny(incoming());
+      allow delete: if false;
+    }
+
+    match /erpSales/{saleId} {
+      allow get: if isValidId(saleId) && (existing().status in ['completed', 'partial_return', 'returned'] || isAdmin());
+      allow list: if resource.data.status in ['completed', 'partial_return', 'returned'] || isAdmin();
+      allow create: if isValidId(saleId) && isValidErpSale(incoming())
+        && incoming().saleId == saleId
+        && incoming().status == 'completed'
+        && incoming().returnedUnits == 0
+        && incoming().returnedRevenue == 0
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/staffAccounts/$(incoming().salespersonId))
+        && isAuthorizedErpOrder(incoming());
+      allow update: if isValidId(saleId) && isValidErpSale(incoming())
+        && incoming().saleId == existing().saleId
+        && incoming().customerId == existing().customerId
+        && incoming().salespersonId == existing().salespersonId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'items', 'returnedUnits', 'returnedRevenue', 'returnedProfit',
+          'status', 'notes', 'staffId', 'auditId', 'updatedAt'
+        ])
+        && isAuthorizedErpOrder(incoming());
+      allow delete: if false;
+    }
+
+    match /erpReturns/{returnId} {
+      allow get: if isValidId(returnId) && (existing().status == 'completed' || isAdmin());
+      allow list: if resource.data.status == 'completed' || isAdmin();
+      allow create: if isValidId(returnId) && isValidErpReturn(incoming())
+        && incoming().returnId == returnId
+        && incoming().status == 'completed'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && isAuthorizedErpAny(incoming());
+      allow update, delete: if false;
     }
   }
 }

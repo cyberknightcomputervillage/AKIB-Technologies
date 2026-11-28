@@ -564,6 +564,520 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "ErpBranch": {
+      "title": "ErpBranch",
+      "description": "Store branch or warehouse location for ERP inventory tracking.",
+      "type": "object",
+      "properties": {
+        "branchId": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 60,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "location": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 120
+        },
+        "phone": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "status": {
+          "type": "string",
+          "enum": ["active", "archived"]
+        },
+        "auditId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "staffId": {
+          "type": "string",
+          "maxLength": 60,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["branchId", "name", "location", "phone", "status", "auditId", "createdAt", "updatedAt"]
+    },
+    "ErpVendor": {
+      "title": "ErpVendor",
+      "description": "Supplier or distributor vendor record for ERP purchase orders and returns.",
+      "type": "object",
+      "properties": {
+        "vendorId": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 60,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": { "type": "string", "minLength": 2, "maxLength": 100 },
+        "company": { "type": "string", "maxLength": 100 },
+        "phone": { "type": "string", "maxLength": 40 },
+        "email": { "type": "string", "maxLength": 160 },
+        "address": { "type": "string", "maxLength": 240 },
+        "notes": { "type": "string", "maxLength": 300 },
+        "status": { "type": "string", "enum": ["active", "archived"] },
+        "auditId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "staffId": {
+          "type": "string",
+          "maxLength": 60,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["vendorId", "name", "company", "phone", "email", "address", "notes", "status", "auditId", "createdAt", "updatedAt"]
+    },
+    "ErpCustomer": {
+      "title": "ErpCustomer",
+      "description": "Walk-in or corporate customer directory for ERP sales invoices and returns.",
+      "type": "object",
+      "properties": {
+        "customerId": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 60,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": { "type": "string", "minLength": 2, "maxLength": 100 },
+        "company": { "type": "string", "maxLength": 100 },
+        "phone": { "type": "string", "maxLength": 40 },
+        "email": { "type": "string", "maxLength": 160 },
+        "address": { "type": "string", "maxLength": 240 },
+        "city": { "type": "string", "maxLength": 80 },
+        "notes": { "type": "string", "maxLength": 300 },
+        "status": { "type": "string", "enum": ["active", "archived"] },
+        "auditId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "staffId": {
+          "type": "string",
+          "maxLength": 60,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["customerId", "name", "company", "phone", "email", "address", "city", "notes", "status", "auditId", "createdAt", "updatedAt"]
+    },
+    "ErpModel": {
+      "title": "ErpModel",
+      "description": "Canonical ERP product and model catalog entry so repeated purchases consolidate under one name in stock.",
+      "type": "object",
+      "properties": {
+        "modelId": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 80,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "brand": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "modelName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "productName": { "type": "string", "minLength": 2, "maxLength": 160 },
+        "category": { "type": "string", "minLength": 2, "maxLength": 40 },
+        "defaultBuyPrice": { "type": "number" },
+        "defaultSellPrice": { "type": "number" },
+        "warranty": { "type": "string", "maxLength": 80 },
+        "status": { "type": "string", "enum": ["active", "archived"] },
+        "auditId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "staffId": {
+          "type": "string",
+          "maxLength": 60,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "modelId",
+        "brand",
+        "modelName",
+        "productName",
+        "category",
+        "defaultBuyPrice",
+        "defaultSellPrice",
+        "warranty",
+        "status",
+        "auditId",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ErpSerial": {
+      "title": "ErpSerial",
+      "description": "Serialized unit inventory record storing current status, branch, cost/sale prices, and complete lifetime history.",
+      "type": "object",
+      "properties": {
+        "serialId": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 80,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "serialNumber": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "modelId": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 80,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "productName": { "type": "string", "minLength": 2, "maxLength": 160 },
+        "brand": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "modelName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "branchId": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 60,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "branchName": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "vendorId": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 60,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "vendorName": { "type": "string", "minLength": 2, "maxLength": 100 },
+        "purchaseId": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "purchaseInvoice": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "purchaseCost": { "type": "number" },
+        "salePrice": { "type": "number" },
+        "status": {
+          "type": "string",
+          "enum": ["in_stock", "sold", "purchase_returned"]
+        },
+        "lastSaleId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "lastSaleInvoice": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "lastCustomerId": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "lastCustomerName": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "salespersonId": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "salespersonName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "history": { "type": "array" },
+        "auditId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "staffId": {
+          "type": "string",
+          "maxLength": 60,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "purchasedAtIso": { "type": "string", "minLength": 10, "maxLength": 40 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "serialId",
+        "serialNumber",
+        "modelId",
+        "productName",
+        "brand",
+        "modelName",
+        "branchId",
+        "branchName",
+        "vendorId",
+        "vendorName",
+        "purchaseId",
+        "purchaseInvoice",
+        "purchaseCost",
+        "salePrice",
+        "status",
+        "lastSaleId",
+        "lastSaleInvoice",
+        "lastCustomerId",
+        "lastCustomerName",
+        "salespersonId",
+        "salespersonName",
+        "history",
+        "auditId",
+        "purchasedAtIso",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ErpPurchase": {
+      "title": "ErpPurchase",
+      "description": "Vendor purchase voucher that adds serialized units into branch stock.",
+      "type": "object",
+      "properties": {
+        "purchaseId": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "invoiceNumber": { "type": "string", "minLength": 2, "maxLength": 60 },
+        "vendorId": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 60,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "vendorName": { "type": "string", "minLength": 2, "maxLength": 100 },
+        "branchId": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 60,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "branchName": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "items": { "type": "array" },
+        "totalAmount": { "type": "number" },
+        "totalUnits": { "type": "integer" },
+        "notes": { "type": "string", "maxLength": 300 },
+        "status": { "type": "string", "enum": ["completed", "partial_return", "returned"] },
+        "createdByName": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "purchaseDateIso": { "type": "string", "minLength": 10, "maxLength": 40 },
+        "auditId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "staffId": {
+          "type": "string",
+          "maxLength": 60,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "purchaseId",
+        "invoiceNumber",
+        "vendorId",
+        "vendorName",
+        "branchId",
+        "branchName",
+        "items",
+        "totalAmount",
+        "totalUnits",
+        "notes",
+        "status",
+        "createdByName",
+        "purchaseDateIso",
+        "auditId",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ErpSale": {
+      "title": "ErpSale",
+      "description": "ERP sales invoice attributed to a stored manager salesperson with profit tracking.",
+      "type": "object",
+      "properties": {
+        "saleId": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "invoiceNumber": { "type": "string", "minLength": 2, "maxLength": 60 },
+        "customerId": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 60,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "customerName": { "type": "string", "minLength": 2, "maxLength": 100 },
+        "branchId": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 60,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "branchName": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "salespersonId": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 60,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "salespersonUsername": { "type": "string", "minLength": 2, "maxLength": 60 },
+        "salespersonName": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "items": { "type": "array" },
+        "totalRevenue": { "type": "number" },
+        "totalCost": { "type": "number" },
+        "totalProfit": { "type": "number" },
+        "totalUnits": { "type": "integer" },
+        "returnedUnits": { "type": "integer" },
+        "returnedRevenue": { "type": "number" },
+        "returnedProfit": { "type": "number" },
+        "saleMonth": {
+          "type": "string",
+          "minLength": 7,
+          "maxLength": 7,
+          "pattern": "^[0-9]{4}-[0-9]{2}$"
+        },
+        "saleDateIso": { "type": "string", "minLength": 10, "maxLength": 40 },
+        "notes": { "type": "string", "maxLength": 300 },
+        "status": { "type": "string", "enum": ["completed", "partial_return", "returned"] },
+        "auditId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "staffId": {
+          "type": "string",
+          "maxLength": 60,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "saleId",
+        "invoiceNumber",
+        "customerId",
+        "customerName",
+        "branchId",
+        "branchName",
+        "salespersonId",
+        "salespersonUsername",
+        "salespersonName",
+        "items",
+        "totalRevenue",
+        "totalCost",
+        "totalProfit",
+        "totalUnits",
+        "returnedUnits",
+        "returnedRevenue",
+        "returnedProfit",
+        "saleMonth",
+        "saleDateIso",
+        "notes",
+        "status",
+        "auditId",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ErpReturn": {
+      "title": "ErpReturn",
+      "description": "Audit log of ERP purchase returns and sales returns with date, time, and profit adjustment.",
+      "type": "object",
+      "properties": {
+        "returnId": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "returnNumber": { "type": "string", "minLength": 2, "maxLength": 60 },
+        "returnType": { "type": "string", "enum": ["purchase_return", "sales_return"] },
+        "serialId": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 80,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "serialNumber": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "modelId": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 80,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "productName": { "type": "string", "minLength": 2, "maxLength": 160 },
+        "branchId": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 60,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "branchName": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "partyId": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 60,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "partyName": { "type": "string", "minLength": 2, "maxLength": 100 },
+        "refInvoiceNumber": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "amount": { "type": "number" },
+        "profitAdjustment": { "type": "number" },
+        "salespersonId": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "salespersonName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "reason": { "type": "string", "maxLength": 300 },
+        "returnMonth": {
+          "type": "string",
+          "minLength": 7,
+          "maxLength": 7,
+          "pattern": "^[0-9]{4}-[0-9]{2}$"
+        },
+        "returnDateIso": { "type": "string", "minLength": 10, "maxLength": 40 },
+        "status": { "type": "string", "enum": ["completed"] },
+        "auditId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "staffId": {
+          "type": "string",
+          "maxLength": 60,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "returnId",
+        "returnNumber",
+        "returnType",
+        "serialId",
+        "serialNumber",
+        "modelId",
+        "productName",
+        "branchId",
+        "branchName",
+        "partyId",
+        "partyName",
+        "refInvoiceNumber",
+        "amount",
+        "profitAdjustment",
+        "salespersonId",
+        "salespersonName",
+        "reason",
+        "returnMonth",
+        "returnDateIso",
+        "status",
+        "auditId",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -626,6 +1140,38 @@
         "$ref": "#/entities/Order"
       },
       "description": "Customer orders with strict owner/admin read isolation and status lifecycle."
+    },
+    "/erpBranches/{branchId}": {
+      "schema": { "$ref": "#/entities/ErpBranch" },
+      "description": "ERP branches and warehouse locations."
+    },
+    "/erpVendors/{vendorId}": {
+      "schema": { "$ref": "#/entities/ErpVendor" },
+      "description": "ERP supplier and vendor directory."
+    },
+    "/erpCustomers/{customerId}": {
+      "schema": { "$ref": "#/entities/ErpCustomer" },
+      "description": "ERP customer directory."
+    },
+    "/erpModels/{modelId}": {
+      "schema": { "$ref": "#/entities/ErpModel" },
+      "description": "ERP canonical product and model setup records."
+    },
+    "/erpSerials/{serialId}": {
+      "schema": { "$ref": "#/entities/ErpSerial" },
+      "description": "ERP serialized inventory units with lifetime purchase, sale, and return history."
+    },
+    "/erpPurchases/{purchaseId}": {
+      "schema": { "$ref": "#/entities/ErpPurchase" },
+      "description": "ERP vendor purchase vouchers."
+    },
+    "/erpSales/{saleId}": {
+      "schema": { "$ref": "#/entities/ErpSale" },
+      "description": "ERP sales invoices linked to stored managers and profit tracking."
+    },
+    "/erpReturns/{returnId}": {
+      "schema": { "$ref": "#/entities/ErpReturn" },
+      "description": "ERP purchase return and sales return audit records."
     }
   }
 }
