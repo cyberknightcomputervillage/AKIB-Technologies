@@ -115,6 +115,8 @@ if (fs.existsSync(rulesPath)) {
     'isValidStaffSecret(data)',
     'isValidStaffAccount(data)',
     'isValidStaffPermissionBatch(staffId, auditId, perm)',
+    'isValidStaffErpPerm(staffId, auditId, permKey)',
+    'isAuthorizedErpSerialTx(data)',
     'canUserAddPost()',
     'canUserEditPost()',
     'isValidErpBranch(data)',

@@ -96,56 +96,43 @@ service cloud.firestore {
       );
     }
 
-    function isValidStaffErpAnyBatch(staffId, auditId) {
+    function isValidStaffErpPerm(staffId, auditId, permKey) {
       return isValidId(staffId)
         && isValidId(auditId)
         && getAfter(/databases/$(database)/documents/staffProofs/$(auditId)).data.staffId == staffId
         && getAfter(/databases/$(database)/documents/staffProofs/$(auditId)).data.createdAt == request.time
         && get(/databases/$(database)/documents/staffSecrets/$(staffId)).data.active == true
-        && (
-          get(/databases/$(database)/documents/staffSecrets/$(staffId)).data.canAddProduct == true ||
-          get(/databases/$(database)/documents/staffSecrets/$(staffId)).data.canEditProduct == true ||
-          get(/databases/$(database)/documents/staffSecrets/$(staffId)).data.canManageOrders == true
+        && (permKey in get(/databases/$(database)/documents/staffSecrets/$(staffId)).data)
+        && get(/databases/$(database)/documents/staffSecrets/$(staffId)).data[permKey] == true;
+    }
+
+    function isAuthorizedErp(data, permKey) {
+      return isAdmin()
+        || (!('staffId' in data) && isValidAdminProofBatch(data.auditId))
+        || (('staffId' in data) && isValidStaffErpPerm(data.staffId, data.auditId, permKey));
+    }
+
+    function isAuthorizedErp2(data, permA, permB) {
+      return isAdmin()
+        || (!('staffId' in data) && isValidAdminProofBatch(data.auditId))
+        || (('staffId' in data) && (
+          isValidStaffErpPerm(data.staffId, data.auditId, permA)
+          || isValidStaffErpPerm(data.staffId, data.auditId, permB)
+        ));
+    }
+
+    function isAuthorizedErpSerialTx(data) {
+      return isAdmin()
+        || (!('staffId' in data) && isValidAdminProofBatch(data.auditId))
+        || (
+          ('staffId' in data)
+          && isValidStaffLoginBatch(data.staffId, data.auditId)
+          && (
+            (('canErpSale' in get(/databases/$(database)/documents/staffSecrets/$(data.staffId)).data) && get(/databases/$(database)/documents/staffSecrets/$(data.staffId)).data.canErpSale == true)
+            || (('canErpSalesReturn' in get(/databases/$(database)/documents/staffSecrets/$(data.staffId)).data) && get(/databases/$(database)/documents/staffSecrets/$(data.staffId)).data.canErpSalesReturn == true)
+            || (('canErpPurchaseReturn' in get(/databases/$(database)/documents/staffSecrets/$(data.staffId)).data) && get(/databases/$(database)/documents/staffSecrets/$(data.staffId)).data.canErpPurchaseReturn == true)
+          )
         );
-    }
-
-    function isValidStaffErpSetupBatch(staffId, auditId) {
-      return isValidId(staffId)
-        && isValidId(auditId)
-        && getAfter(/databases/$(database)/documents/staffProofs/$(auditId)).data.staffId == staffId
-        && getAfter(/databases/$(database)/documents/staffProofs/$(auditId)).data.createdAt == request.time
-        && get(/databases/$(database)/documents/staffSecrets/$(staffId)).data.active == true
-        && (
-          get(/databases/$(database)/documents/staffSecrets/$(staffId)).data.canAddProduct == true ||
-          get(/databases/$(database)/documents/staffSecrets/$(staffId)).data.canEditProduct == true
-        );
-    }
-
-    function isValidStaffErpOrderBatch(staffId, auditId) {
-      return isValidId(staffId)
-        && isValidId(auditId)
-        && getAfter(/databases/$(database)/documents/staffProofs/$(auditId)).data.staffId == staffId
-        && getAfter(/databases/$(database)/documents/staffProofs/$(auditId)).data.createdAt == request.time
-        && get(/databases/$(database)/documents/staffSecrets/$(staffId)).data.active == true
-        && get(/databases/$(database)/documents/staffSecrets/$(staffId)).data.canManageOrders == true;
-    }
-
-    function isAuthorizedErpSetup(data) {
-      return isAdmin()
-        || (!('staffId' in data) && isValidAdminProofBatch(data.auditId))
-        || (('staffId' in data) && isValidStaffErpSetupBatch(data.staffId, data.auditId));
-    }
-
-    function isAuthorizedErpOrder(data) {
-      return isAdmin()
-        || (!('staffId' in data) && isValidAdminProofBatch(data.auditId))
-        || (('staffId' in data) && isValidStaffErpOrderBatch(data.staffId, data.auditId));
-    }
-
-    function isAuthorizedErpAny(data) {
-      return isAdmin()
-        || (!('staffId' in data) && isValidAdminProofBatch(data.auditId))
-        || (('staffId' in data) && isValidStaffErpAnyBatch(data.staffId, data.auditId));
     }
 
     function canUserAddPost() {
@@ -204,7 +191,10 @@ service cloud.firestore {
         ])
         && data.keys().hasOnly([
           'staffId', 'proofHash', 'active', 'canAddProduct', 'canEditProduct',
-          'canDeleteProduct', 'canManageOrders', 'canViewAnalytics', 'auditId', 'updatedAt'
+          'canDeleteProduct', 'canManageOrders', 'canViewAnalytics',
+          'canErpStock', 'canErpPurchase', 'canErpPurchaseReturn', 'canErpSale',
+          'canErpSalesReturn', 'canErpProfit', 'canErpSerialSearch', 'canErpSetup', 'canErpEdit',
+          'auditId', 'updatedAt'
         ])
         && isValidId(data.staffId)
         && data.staffId.size() >= 3 && data.staffId.size() <= 60
@@ -215,6 +205,15 @@ service cloud.firestore {
         && data.canDeleteProduct is bool
         && data.canManageOrders is bool
         && data.canViewAnalytics is bool
+        && (!('canErpStock' in data) || data.canErpStock is bool)
+        && (!('canErpPurchase' in data) || data.canErpPurchase is bool)
+        && (!('canErpPurchaseReturn' in data) || data.canErpPurchaseReturn is bool)
+        && (!('canErpSale' in data) || data.canErpSale is bool)
+        && (!('canErpSalesReturn' in data) || data.canErpSalesReturn is bool)
+        && (!('canErpProfit' in data) || data.canErpProfit is bool)
+        && (!('canErpSerialSearch' in data) || data.canErpSerialSearch is bool)
+        && (!('canErpSetup' in data) || data.canErpSetup is bool)
+        && (!('canErpEdit' in data) || data.canErpEdit is bool)
         && isValidId(data.auditId)
         && data.updatedAt is timestamp;
     }
@@ -228,8 +227,10 @@ service cloud.firestore {
         && data.keys().hasOnly([
           'staffId', 'username', 'displayName', 'active', 'status',
           'canAddProduct', 'canEditProduct', 'canDeleteProduct',
-          'canManageOrders', 'canViewAnalytics', 'loginCount', 'auditId',
-          'lastLoginAt', 'createdAt', 'updatedAt'
+          'canManageOrders', 'canViewAnalytics',
+          'canErpStock', 'canErpPurchase', 'canErpPurchaseReturn', 'canErpSale',
+          'canErpSalesReturn', 'canErpProfit', 'canErpSerialSearch', 'canErpSetup', 'canErpEdit',
+          'loginCount', 'auditId', 'lastLoginAt', 'createdAt', 'updatedAt'
         ])
         && isValidId(data.staffId) && data.staffId.size() >= 3 && data.staffId.size() <= 60
         && isValidId(data.username) && data.username.size() >= 3 && data.username.size() <= 60
@@ -241,6 +242,15 @@ service cloud.firestore {
         && data.canDeleteProduct is bool
         && data.canManageOrders is bool
         && data.canViewAnalytics is bool
+        && (!('canErpStock' in data) || data.canErpStock is bool)
+        && (!('canErpPurchase' in data) || data.canErpPurchase is bool)
+        && (!('canErpPurchaseReturn' in data) || data.canErpPurchaseReturn is bool)
+        && (!('canErpSale' in data) || data.canErpSale is bool)
+        && (!('canErpSalesReturn' in data) || data.canErpSalesReturn is bool)
+        && (!('canErpProfit' in data) || data.canErpProfit is bool)
+        && (!('canErpSerialSearch' in data) || data.canErpSerialSearch is bool)
+        && (!('canErpSetup' in data) || data.canErpSetup is bool)
+        && (!('canErpEdit' in data) || data.canErpEdit is bool)
         && data.loginCount is int && data.loginCount >= 0 && data.loginCount <= 1000000
         && isValidId(data.auditId)
         && (!('lastLoginAt' in data) || data.lastLoginAt is timestamp)
@@ -700,7 +710,10 @@ service cloud.firestore {
             && incoming().diff(existing()).affectedKeys().hasOnly([
               'displayName', 'active', 'status',
               'canAddProduct', 'canEditProduct', 'canDeleteProduct',
-              'canManageOrders', 'canViewAnalytics', 'auditId', 'updatedAt'
+              'canManageOrders', 'canViewAnalytics',
+              'canErpStock', 'canErpPurchase', 'canErpPurchaseReturn', 'canErpSale',
+              'canErpSalesReturn', 'canErpProfit', 'canErpSerialSearch', 'canErpSetup', 'canErpEdit',
+              'auditId', 'updatedAt'
             ])
           ) ||
           // Tier 2: Verified manager records login event
@@ -934,13 +947,13 @@ service cloud.firestore {
         && incoming().branchId == branchId
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time
-        && isAuthorizedErpSetup(incoming());
+        && isAuthorizedErp(incoming(), 'canErpSetup');
       allow update: if isValidId(branchId) && isValidErpBranch(incoming())
         && incoming().branchId == existing().branchId
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
         && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'location', 'phone', 'status', 'staffId', 'auditId', 'updatedAt'])
-        && isAuthorizedErpSetup(incoming());
+        && isAuthorizedErp(incoming(), 'canErpEdit');
       allow delete: if false;
     }
 
@@ -951,13 +964,13 @@ service cloud.firestore {
         && incoming().vendorId == vendorId
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time
-        && isAuthorizedErpSetup(incoming());
+        && isAuthorizedErp(incoming(), 'canErpSetup');
       allow update: if isValidId(vendorId) && isValidErpVendor(incoming())
         && incoming().vendorId == existing().vendorId
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
         && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'company', 'phone', 'email', 'address', 'notes', 'status', 'staffId', 'auditId', 'updatedAt'])
-        && isAuthorizedErpSetup(incoming());
+        && isAuthorizedErp(incoming(), 'canErpEdit');
       allow delete: if false;
     }
 
@@ -968,13 +981,13 @@ service cloud.firestore {
         && incoming().customerId == customerId
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time
-        && isAuthorizedErpAny(incoming());
+        && isAuthorizedErp2(incoming(), 'canErpSetup', 'canErpSale');
       allow update: if isValidId(customerId) && isValidErpCustomer(incoming())
         && incoming().customerId == existing().customerId
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
         && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'company', 'phone', 'email', 'address', 'city', 'notes', 'status', 'staffId', 'auditId', 'updatedAt'])
-        && isAuthorizedErpAny(incoming());
+        && isAuthorizedErp(incoming(), 'canErpEdit');
       allow delete: if false;
     }
 
@@ -985,7 +998,7 @@ service cloud.firestore {
         && incoming().modelId == modelId
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time
-        && isAuthorizedErpSetup(incoming());
+        && isAuthorizedErp(incoming(), 'canErpSetup');
       allow update: if isValidId(modelId) && isValidErpModel(incoming())
         && incoming().modelId == existing().modelId
         && incoming().createdAt == existing().createdAt
@@ -994,7 +1007,7 @@ service cloud.firestore {
           'brand', 'modelName', 'productName', 'category',
           'defaultBuyPrice', 'defaultSellPrice', 'warranty', 'status', 'staffId', 'auditId', 'updatedAt'
         ])
-        && isAuthorizedErpSetup(incoming());
+        && isAuthorizedErp(incoming(), 'canErpEdit');
       allow delete: if false;
     }
 
@@ -1006,22 +1019,34 @@ service cloud.firestore {
         && incoming().status == 'in_stock'
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time
-        && isAuthorizedErpSetup(incoming());
+        && isAuthorizedErp(incoming(), 'canErpPurchase');
       allow update: if isValidId(serialId) && isValidErpSerial(incoming())
         && incoming().serialId == existing().serialId
-        && incoming().serialNumber == existing().serialNumber
         && incoming().modelId == existing().modelId
         && incoming().purchaseId == existing().purchaseId
-        && incoming().purchaseCost == existing().purchaseCost
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
         && incoming().history.size() >= existing().history.size()
-        && incoming().diff(existing()).affectedKeys().hasOnly([
-          'branchId', 'branchName', 'salePrice', 'status',
-          'lastSaleId', 'lastSaleInvoice', 'lastCustomerId', 'lastCustomerName',
-          'salespersonId', 'salespersonName', 'history', 'staffId', 'auditId', 'updatedAt'
-        ])
-        && isAuthorizedErpAny(incoming());
+        && (
+          (
+            incoming().serialNumber == existing().serialNumber
+            && incoming().purchaseCost == existing().purchaseCost
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'branchId', 'branchName', 'salePrice', 'status',
+              'lastSaleId', 'lastSaleInvoice', 'lastCustomerId', 'lastCustomerName',
+              'salespersonId', 'salespersonName', 'history', 'staffId', 'auditId', 'updatedAt'
+            ])
+            && isAuthorizedErpSerialTx(incoming())
+          ) || (
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'serialNumber', 'branchId', 'branchName', 'vendorId', 'vendorName',
+              'purchaseInvoice', 'purchaseCost', 'salePrice', 'status',
+              'lastSaleId', 'lastSaleInvoice', 'lastCustomerId', 'lastCustomerName',
+              'salespersonId', 'salespersonName', 'history', 'purchasedAtIso', 'staffId', 'auditId', 'updatedAt'
+            ])
+            && isAuthorizedErp(incoming(), 'canErpEdit')
+          )
+        );
       allow delete: if false;
     }
 
@@ -1033,14 +1058,25 @@ service cloud.firestore {
         && incoming().status == 'completed'
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time
-        && isAuthorizedErpSetup(incoming());
+        && isAuthorizedErp(incoming(), 'canErpPurchase');
       allow update: if isValidId(purchaseId) && isValidErpPurchase(incoming())
         && incoming().purchaseId == existing().purchaseId
-        && incoming().vendorId == existing().vendorId
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
-        && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'notes', 'staffId', 'auditId', 'updatedAt'])
-        && isAuthorizedErpAny(incoming());
+        && (
+          (
+            incoming().vendorId == existing().vendorId
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'notes', 'staffId', 'auditId', 'updatedAt'])
+            && isAuthorizedErp2(incoming(), 'canErpPurchaseReturn', 'canErpEdit')
+          ) || (
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'invoiceNumber', 'vendorId', 'vendorName', 'branchId', 'branchName',
+              'items', 'totalAmount', 'totalUnits', 'notes', 'purchaseDateIso', 'status',
+              'staffId', 'auditId', 'updatedAt'
+            ])
+            && isAuthorizedErp(incoming(), 'canErpEdit')
+          )
+        );
       allow delete: if false;
     }
 
@@ -1055,18 +1091,31 @@ service cloud.firestore {
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time
         && exists(/databases/$(database)/documents/staffAccounts/$(incoming().salespersonId))
-        && isAuthorizedErpOrder(incoming());
+        && isAuthorizedErp(incoming(), 'canErpSale');
       allow update: if isValidId(saleId) && isValidErpSale(incoming())
         && incoming().saleId == existing().saleId
-        && incoming().customerId == existing().customerId
-        && incoming().salespersonId == existing().salespersonId
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
-        && incoming().diff(existing()).affectedKeys().hasOnly([
-          'items', 'returnedUnits', 'returnedRevenue', 'returnedProfit',
-          'status', 'notes', 'staffId', 'auditId', 'updatedAt'
-        ])
-        && isAuthorizedErpOrder(incoming());
+        && (
+          (
+            incoming().customerId == existing().customerId
+            && incoming().salespersonId == existing().salespersonId
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'items', 'returnedUnits', 'returnedRevenue', 'returnedProfit',
+              'status', 'notes', 'staffId', 'auditId', 'updatedAt'
+            ])
+            && isAuthorizedErp2(incoming(), 'canErpSalesReturn', 'canErpEdit')
+          ) || (
+            exists(/databases/$(database)/documents/staffAccounts/$(incoming().salespersonId))
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'invoiceNumber', 'customerId', 'customerName', 'branchId', 'branchName',
+              'salespersonId', 'salespersonUsername', 'salespersonName', 'items',
+              'totalRevenue', 'totalCost', 'totalProfit', 'returnedUnits', 'returnedRevenue', 'returnedProfit',
+              'saleMonth', 'saleDateIso', 'notes', 'status', 'staffId', 'auditId', 'updatedAt'
+            ])
+            && isAuthorizedErp(incoming(), 'canErpEdit')
+          )
+        );
       allow delete: if false;
     }
 
@@ -1078,8 +1127,19 @@ service cloud.firestore {
         && incoming().status == 'completed'
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time
-        && isAuthorizedErpAny(incoming());
-      allow update, delete: if false;
+        && isAuthorizedErp2(incoming(), 'canErpPurchaseReturn', 'canErpSalesReturn');
+      allow update: if isValidId(returnId) && isValidErpReturn(incoming())
+        && incoming().returnId == existing().returnId
+        && incoming().returnType == existing().returnType
+        && incoming().serialId == existing().serialId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'returnNumber', 'amount', 'profitAdjustment', 'reason',
+          'returnMonth', 'returnDateIso', 'staffId', 'auditId', 'updatedAt'
+        ])
+        && isAuthorizedErp(incoming(), 'canErpEdit');
+      allow delete: if false;
     }
   }
 }

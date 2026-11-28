@@ -72,6 +72,15 @@ export interface StaffPermissions {
   canDeleteProduct: boolean;
   canManageOrders: boolean;
   canViewAnalytics: boolean;
+  canErpStock?: boolean;
+  canErpPurchase?: boolean;
+  canErpPurchaseReturn?: boolean;
+  canErpSale?: boolean;
+  canErpSalesReturn?: boolean;
+  canErpProfit?: boolean;
+  canErpSerialSearch?: boolean;
+  canErpSetup?: boolean;
+  canErpEdit?: boolean;
 }
 
 export interface StaffAccount extends StaffPermissions {
@@ -127,7 +136,24 @@ export interface CartItem {
 }
 
 export type AppView = 'store' | 'orders' | 'admin';
-export type AdminTab = 'post' | 'products' | 'orders' | 'erp' | 'users' | 'analytics' | 'security';
+export type ErpTabId =
+  | 'erp-stock'
+  | 'erp-purchase'
+  | 'erp-purchase-return'
+  | 'erp-sales'
+  | 'erp-sales-return'
+  | 'erp-profit'
+  | 'erp-serial-search'
+  | 'erp-setup';
+
+export type AdminTab =
+  | 'post'
+  | 'products'
+  | 'orders'
+  | ErpTabId
+  | 'users'
+  | 'analytics'
+  | 'security';
 
 export const ERP_CATEGORIES = [
   'Laptops',

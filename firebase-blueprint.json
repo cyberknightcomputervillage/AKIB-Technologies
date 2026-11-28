@@ -393,6 +393,15 @@
         "canViewAnalytics": {
           "type": "boolean"
         },
+        "canErpStock": { "type": "boolean" },
+        "canErpPurchase": { "type": "boolean" },
+        "canErpPurchaseReturn": { "type": "boolean" },
+        "canErpSale": { "type": "boolean" },
+        "canErpSalesReturn": { "type": "boolean" },
+        "canErpProfit": { "type": "boolean" },
+        "canErpSerialSearch": { "type": "boolean" },
+        "canErpSetup": { "type": "boolean" },
+        "canErpEdit": { "type": "boolean" },
         "auditId": {
           "type": "string",
           "minLength": 1,
@@ -461,6 +470,15 @@
         "canViewAnalytics": {
           "type": "boolean"
         },
+        "canErpStock": { "type": "boolean" },
+        "canErpPurchase": { "type": "boolean" },
+        "canErpPurchaseReturn": { "type": "boolean" },
+        "canErpSale": { "type": "boolean" },
+        "canErpSalesReturn": { "type": "boolean" },
+        "canErpProfit": { "type": "boolean" },
+        "canErpSerialSearch": { "type": "boolean" },
+        "canErpSetup": { "type": "boolean" },
+        "canErpEdit": { "type": "boolean" },
         "loginCount": {
           "type": "integer"
         },

@@ -8,6 +8,7 @@ import {
   Eye,
   EyeOff,
   KeyRound,
+  Layers,
   Link as LinkIcon,
   Lock,
   Minus,
@@ -17,10 +18,15 @@ import {
   PlayCircle,
   Plus,
   PlusCircle,
+  RotateCcw,
   Search,
   ShieldCheck,
+  ShoppingBag,
   ShoppingCart,
   Trash2,
+  TrendingUp,
+  Truck,
+  Undo2,
   UserPlus,
   Users,
   X,
@@ -35,6 +41,7 @@ import {
 import {
   PRODUCT_CATEGORIES,
   type AdminTab,
+  type ErpTabId,
   type Order,
   type OrderStatus,
   type Product,
@@ -80,7 +87,7 @@ function createFreshPostForm(): ProductInput {
   };
 }
 
-const STAFF_PERMISSION_OPTIONS: {
+const STORE_PERMISSION_OPTIONS: {
   key: keyof StaffPermissions;
   label: string;
   hint: string;
@@ -88,29 +95,83 @@ const STAFF_PERMISSION_OPTIONS: {
   {
     key: 'canAddProduct',
     label: 'Add / Post Products',
-    hint: 'Create new listings with image links and specs',
+    hint: 'Create new storefront listings with image links and specs',
   },
   {
     key: 'canEditProduct',
     label: 'Edit Products & Stock',
-    hint: 'Modify prices, details, and adjust stock counts',
+    hint: 'Modify storefront prices, details, and stock counts',
   },
   {
     key: 'canDeleteProduct',
     label: 'Delete Products',
-    hint: 'Remove product listings from the catalog',
+    hint: 'Remove product listings from the storefront catalog',
   },
   {
     key: 'canManageOrders',
     label: 'Manage Orders',
-    hint: 'View orders, update status, and save courier notes',
+    hint: 'View storefront orders, update status, and save courier notes',
   },
   {
     key: 'canViewAnalytics',
     label: 'View Analytics',
-    hint: 'Access gross revenue and sales breakdown',
+    hint: 'Access storefront revenue and order breakdown',
   },
 ];
+
+const ERP_PERMISSION_OPTIONS: {
+  key: keyof StaffPermissions;
+  label: string;
+  hint: string;
+}[] = [
+  {
+    key: 'canErpStock',
+    label: 'ERP: Stock',
+    hint: 'View live stock filtered by brand, branch, model, price, or serials',
+  },
+  {
+    key: 'canErpPurchase',
+    label: 'ERP: Purchase',
+    hint: 'Record vendor purchases that automatically enter stock',
+  },
+  {
+    key: 'canErpPurchaseReturn',
+    label: 'ERP: Purchase Return',
+    hint: 'Return in-stock serial units back to vendors',
+  },
+  {
+    key: 'canErpSale',
+    label: 'ERP: Sales Order',
+    hint: 'Create serialized ERP sales invoices attributed to managers',
+  },
+  {
+    key: 'canErpSalesReturn',
+    label: 'ERP: Sales Return',
+    hint: 'Process customer sales returns and restock serials',
+  },
+  {
+    key: 'canErpProfit',
+    label: 'ERP: Profit Report',
+    hint: 'View monthly salesperson sales volume and profit breakdown',
+  },
+  {
+    key: 'canErpSerialSearch',
+    label: 'ERP: Serial Search',
+    hint: 'Search serials and inspect complete lifetime history',
+  },
+  {
+    key: 'canErpSetup',
+    label: 'ERP: Setup',
+    hint: 'Add Product Models, Vendors, Customers, and Branches',
+  },
+  {
+    key: 'canErpEdit',
+    label: 'ERP: Edit Records',
+    hint: 'Edit existing purchases, sales invoices, returns, serials, and setup items',
+  },
+];
+
+const STAFF_PERMISSION_OPTIONS = [...STORE_PERMISSION_OPTIONS, ...ERP_PERMISSION_OPTIONS];
 
 const DEFAULT_NEW_STAFF_PERMS: StaffPermissions = {
   canAddProduct: true,
@@ -118,6 +179,15 @@ const DEFAULT_NEW_STAFF_PERMS: StaffPermissions = {
   canDeleteProduct: false,
   canManageOrders: false,
   canViewAnalytics: false,
+  canErpStock: false,
+  canErpPurchase: false,
+  canErpPurchaseReturn: false,
+  canErpSale: false,
+  canErpSalesReturn: false,
+  canErpProfit: false,
+  canErpSerialSearch: false,
+  canErpSetup: false,
+  canErpEdit: false,
 };
 
 export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
@@ -158,6 +228,15 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
             canDeleteProduct: true,
             canManageOrders: true,
             canViewAnalytics: true,
+            canErpStock: true,
+            canErpPurchase: true,
+            canErpPurchaseReturn: true,
+            canErpSale: true,
+            canErpSalesReturn: true,
+            canErpProfit: true,
+            canErpSerialSearch: true,
+            canErpSetup: true,
+            canErpEdit: true,
           }
         : {
             canAddProduct: Boolean(activeStaffAccount?.canAddProduct),
@@ -165,6 +244,15 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
             canDeleteProduct: Boolean(activeStaffAccount?.canDeleteProduct),
             canManageOrders: Boolean(activeStaffAccount?.canManageOrders),
             canViewAnalytics: Boolean(activeStaffAccount?.canViewAnalytics),
+            canErpStock: Boolean(activeStaffAccount?.canErpStock),
+            canErpPurchase: Boolean(activeStaffAccount?.canErpPurchase),
+            canErpPurchaseReturn: Boolean(activeStaffAccount?.canErpPurchaseReturn),
+            canErpSale: Boolean(activeStaffAccount?.canErpSale),
+            canErpSalesReturn: Boolean(activeStaffAccount?.canErpSalesReturn),
+            canErpProfit: Boolean(activeStaffAccount?.canErpProfit),
+            canErpSerialSearch: Boolean(activeStaffAccount?.canErpSerialSearch),
+            canErpSetup: Boolean(activeStaffAccount?.canErpSetup),
+            canErpEdit: Boolean(activeStaffAccount?.canErpEdit),
           },
     [isSuperAdmin, activeStaffAccount]
   );
@@ -654,9 +742,10 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
       id: AdminTab;
       label: string;
       icon: React.ComponentType<{ className?: string }>;
+      section: 'store' | 'erp';
     }[] = [];
     if (perms.canAddProduct) {
-      list.push({ id: 'post', label: 'Post Product', icon: PlusCircle });
+      list.push({ id: 'post', label: 'Post Product', icon: PlusCircle, section: 'store' });
     }
     if (perms.canEditProduct || perms.canDeleteProduct) {
       list.push({
@@ -668,29 +757,68 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
               ? 'Products (Edit & Stock)'
               : 'Products (Delete)',
         icon: Package,
+        section: 'store',
       });
     }
     if (perms.canManageOrders) {
-      list.push({ id: 'orders', label: 'Orders', icon: ShoppingCart });
-    }
-    if (
-      isSuperAdmin ||
-      perms.canAddProduct ||
-      perms.canEditProduct ||
-      perms.canManageOrders ||
-      perms.canViewAnalytics
-    ) {
-      list.push({ id: 'erp', label: 'ERP System', icon: Boxes });
+      list.push({ id: 'orders', label: 'Orders', icon: ShoppingCart, section: 'store' });
     }
     if (isSuperAdmin) {
-      list.push({ id: 'users', label: 'Managers & Users', icon: Users });
+      list.push({ id: 'users', label: 'Managers & Users', icon: Users, section: 'store' });
     }
     if (perms.canViewAnalytics) {
-      list.push({ id: 'analytics', label: 'Analytics', icon: BarChart3 });
+      list.push({ id: 'analytics', label: 'Analytics', icon: BarChart3, section: 'store' });
     }
     if (isSuperAdmin) {
-      list.push({ id: 'security', label: 'Change Password', icon: KeyRound });
+      list.push({ id: 'security', label: 'Change Password', icon: KeyRound, section: 'store' });
     }
+
+    // Separate standalone ERP Tabs (gated per Manager checkbox)
+    if (perms.canErpStock) {
+      list.push({ id: 'erp-stock', label: 'Stock', icon: Boxes, section: 'erp' });
+    }
+    if (perms.canErpPurchase) {
+      list.push({ id: 'erp-purchase', label: 'Purchase', icon: Truck, section: 'erp' });
+    }
+    if (perms.canErpPurchaseReturn) {
+      list.push({
+        id: 'erp-purchase-return',
+        label: 'Purchase Return',
+        icon: Undo2,
+        section: 'erp',
+      });
+    }
+    if (perms.canErpSale) {
+      list.push({ id: 'erp-sales', label: 'Sales Order', icon: ShoppingBag, section: 'erp' });
+    }
+    if (perms.canErpSalesReturn) {
+      list.push({
+        id: 'erp-sales-return',
+        label: 'Sales Return',
+        icon: RotateCcw,
+        section: 'erp',
+      });
+    }
+    if (perms.canErpProfit) {
+      list.push({
+        id: 'erp-profit',
+        label: 'Profit Report',
+        icon: TrendingUp,
+        section: 'erp',
+      });
+    }
+    if (perms.canErpSerialSearch) {
+      list.push({
+        id: 'erp-serial-search',
+        label: 'Serial Search',
+        icon: Search,
+        section: 'erp',
+      });
+    }
+    if (perms.canErpSetup) {
+      list.push({ id: 'erp-setup', label: 'Setup', icon: Layers, section: 'erp' });
+    }
+
     return list;
   }, [perms, isSuperAdmin]);
 
@@ -724,7 +852,7 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
       return;
     }
 
-    const enabledLabels = STAFF_PERMISSION_OPTIONS.filter((o) => newStaffPerms[o.key]).map(
+    const enabledLabels = STAFF_PERMISSION_OPTIONS.filter((o) => Boolean(newStaffPerms[o.key])).map(
       (o) => o.label
     );
 
@@ -760,6 +888,15 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
         canDeleteProduct: Boolean(m.canDeleteProduct),
         canManageOrders: Boolean(m.canManageOrders),
         canViewAnalytics: Boolean(m.canViewAnalytics),
+        canErpStock: Boolean(m.canErpStock),
+        canErpPurchase: Boolean(m.canErpPurchase),
+        canErpPurchaseReturn: Boolean(m.canErpPurchaseReturn),
+        canErpSale: Boolean(m.canErpSale),
+        canErpSalesReturn: Boolean(m.canErpSalesReturn),
+        canErpProfit: Boolean(m.canErpProfit),
+        canErpSerialSearch: Boolean(m.canErpSerialSearch),
+        canErpSetup: Boolean(m.canErpSetup),
+        canErpEdit: Boolean(m.canErpEdit),
       }
     );
   };
@@ -767,12 +904,8 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
   const isManagerPermsDirty = (m: StaffAccount): boolean => {
     const draft = staffPermDrafts[m.staffId];
     if (!draft) return false;
-    return (
-      draft.canAddProduct !== Boolean(m.canAddProduct) ||
-      draft.canEditProduct !== Boolean(m.canEditProduct) ||
-      draft.canDeleteProduct !== Boolean(m.canDeleteProduct) ||
-      draft.canManageOrders !== Boolean(m.canManageOrders) ||
-      draft.canViewAnalytics !== Boolean(m.canViewAnalytics)
+    return STAFF_PERMISSION_OPTIONS.some(
+      (opt) => Boolean(draft[opt.key]) !== Boolean(m[opt.key])
     );
   };
 
@@ -864,45 +997,82 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
             aria-label="Admin sections"
             className="flex lg:flex-col gap-1.5 overflow-x-auto pb-2 lg:pb-0"
           >
-            {navTabs.map((tab) => {
-              const Icon = tab.icon;
-              const active = activeTab === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`flex items-center justify-between gap-3 px-4 py-2.5 rounded-lg text-sm font-medium whitespace-nowrap shrink-0 transition-colors cursor-pointer min-h-[44px] ${
-                    active
-                      ? 'bg-slate-900 text-white'
-                      : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 lg:border-transparent lg:bg-transparent'
-                  }`}
-                >
-                  <span className="flex items-center gap-2.5">
-                    <Icon className="w-4 h-4" />
-                    {tab.label}
-                  </span>
-                  {tab.id === 'orders' && analytics.pendingCount > 0 && (
-                    <span
-                      className={`font-mono text-xs tabular-nums ${
-                        active ? 'text-blue-300' : 'text-blue-700'
-                      }`}
-                    >
-                      {analytics.pendingCount}
+            {navTabs.some((t) => t.section === 'store') && (
+              <p className="hidden lg:block px-3 pt-1 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                Store & Admin
+              </p>
+            )}
+            {navTabs
+              .filter((t) => t.section === 'store')
+              .map((tab) => {
+                const Icon = tab.icon;
+                const active = activeTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setActiveTab(tab.id)}
+                    className={`flex items-center justify-between gap-3 px-4 py-2.5 rounded-lg text-sm font-medium whitespace-nowrap shrink-0 transition-colors cursor-pointer min-h-[42px] ${
+                      active
+                        ? 'bg-slate-900 text-white'
+                        : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 lg:border-transparent lg:bg-transparent'
+                    }`}
+                  >
+                    <span className="flex items-center gap-2.5">
+                      <Icon className="w-4 h-4" />
+                      {tab.label}
                     </span>
-                  )}
-                  {tab.id === 'users' && (staffAccounts.length > 0 || analytics.trackedUsers.length > 0) && (
-                    <span
-                      className={`font-mono text-xs tabular-nums ${
-                        active ? 'text-blue-300' : 'text-slate-500'
-                      }`}
-                    >
-                      {staffAccounts.length}
+                    {tab.id === 'orders' && analytics.pendingCount > 0 && (
+                      <span
+                        className={`font-mono text-xs tabular-nums ${
+                          active ? 'text-blue-300' : 'text-blue-700'
+                        }`}
+                      >
+                        {analytics.pendingCount}
+                      </span>
+                    )}
+                    {tab.id === 'users' &&
+                      (staffAccounts.length > 0 || analytics.trackedUsers.length > 0) && (
+                        <span
+                          className={`font-mono text-xs tabular-nums ${
+                            active ? 'text-blue-300' : 'text-slate-500'
+                          }`}
+                        >
+                          {staffAccounts.length}
+                        </span>
+                      )}
+                  </button>
+                );
+              })}
+
+            {navTabs.some((t) => t.section === 'erp') && (
+              <p className="hidden lg:block px-3 pt-4 pb-1 text-[10px] font-bold uppercase tracking-wider text-[#3749BB] border-t border-slate-200 mt-2">
+                ERP System
+              </p>
+            )}
+            {navTabs
+              .filter((t) => t.section === 'erp')
+              .map((tab) => {
+                const Icon = tab.icon;
+                const active = activeTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setActiveTab(tab.id)}
+                    className={`flex items-center justify-between gap-3 px-4 py-2.5 rounded-lg text-sm font-medium whitespace-nowrap shrink-0 transition-colors cursor-pointer min-h-[42px] ${
+                      active
+                        ? 'bg-[#3749BB] text-white'
+                        : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 lg:border-transparent lg:bg-transparent'
+                    }`}
+                  >
+                    <span className="flex items-center gap-2.5">
+                      <Icon className="w-4 h-4" />
+                      {tab.label}
                     </span>
-                  )}
-                </button>
-              );
-            })}
+                  </button>
+                );
+              })}
           </nav>
         </aside>
 
@@ -1879,9 +2049,10 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
             </div>
           )}
 
-          {/* ERP SYSTEM WORKSPACE */}
-          {activeTab === 'erp' && (
+          {/* STANDALONE ERP SYSTEM TABS */}
+          {activeTab.startsWith('erp-') && (
             <ErpSystemWorkspace
+              activeTab={activeTab as ErpTabId}
               requestPasswordConfirm={requestPasswordConfirm}
               onNavigateTab={setActiveTab}
             />
@@ -1987,37 +2158,104 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
                     </div>
                   </div>
 
-                  <div>
-                    <p className="text-xs font-semibold text-slate-800 mb-2.5">
-                      Select Manager Permissions (Checkboxes)
-                    </p>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
-                      {STAFF_PERMISSION_OPTIONS.map((opt) => (
-                        <label
-                          key={opt.key}
-                          className={`flex items-start gap-2.5 p-3 rounded-lg border cursor-pointer transition-colors ${
-                            newStaffPerms[opt.key]
-                              ? 'bg-blue-50/70 border-[#3749BB]/40'
-                              : 'bg-slate-50 border-slate-200 hover:bg-slate-100/70'
-                          }`}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={newStaffPerms[opt.key]}
-                            onChange={(e) =>
-                              setNewStaffPerms((prev) => ({
-                                ...prev,
-                                [opt.key]: e.target.checked,
-                              }))
+                  <div className="space-y-4">
+                    <div>
+                      <p className="text-xs font-semibold text-slate-800 mb-2">
+                        Storefront & General Permissions
+                      </p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                        {STORE_PERMISSION_OPTIONS.map((opt) => (
+                          <label
+                            key={opt.key}
+                            className={`flex items-start gap-2.5 p-3 rounded-lg border cursor-pointer transition-colors ${
+                              newStaffPerms[opt.key]
+                                ? 'bg-blue-50/70 border-[#3749BB]/40'
+                                : 'bg-slate-50 border-slate-200 hover:bg-slate-100/70'
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={Boolean(newStaffPerms[opt.key])}
+                              onChange={(e) =>
+                                setNewStaffPerms((prev) => ({
+                                  ...prev,
+                                  [opt.key]: e.target.checked,
+                                }))
+                              }
+                              className="mt-0.5 rounded border-slate-300 text-[#3749BB] focus:ring-[#3749BB]"
+                            />
+                            <div className="min-w-0">
+                              <p className="text-xs font-semibold text-slate-900">{opt.label}</p>
+                              <p className="text-[11px] text-slate-500 leading-snug">{opt.hint}</p>
+                            </div>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="pt-2 border-t border-slate-200">
+                      <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                        <p className="text-xs font-semibold text-[#3749BB]">
+                          ERP System Tabs & Edit Permissions
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setNewStaffPerms((prev) => {
+                                const next = { ...prev };
+                                for (const opt of ERP_PERMISSION_OPTIONS) next[opt.key] = true;
+                                return next;
+                              })
                             }
-                            className="mt-0.5 rounded border-slate-300 text-[#3749BB] focus:ring-[#3749BB]"
-                          />
-                          <div className="min-w-0">
-                            <p className="text-xs font-semibold text-slate-900">{opt.label}</p>
-                            <p className="text-[11px] text-slate-500 leading-snug">{opt.hint}</p>
-                          </div>
-                        </label>
-                      ))}
+                            className="text-[11px] font-semibold text-[#3749BB] hover:underline cursor-pointer"
+                          >
+                            Select All ERP
+                          </button>
+                          <span className="text-slate-300">|</span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setNewStaffPerms((prev) => {
+                                const next = { ...prev };
+                                for (const opt of ERP_PERMISSION_OPTIONS) next[opt.key] = false;
+                                return next;
+                              })
+                            }
+                            className="text-[11px] font-semibold text-slate-500 hover:underline cursor-pointer"
+                          >
+                            Clear ERP
+                          </button>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                        {ERP_PERMISSION_OPTIONS.map((opt) => (
+                          <label
+                            key={opt.key}
+                            className={`flex items-start gap-2.5 p-3 rounded-lg border cursor-pointer transition-colors ${
+                              newStaffPerms[opt.key]
+                                ? 'bg-blue-50/70 border-[#3749BB]/40'
+                                : 'bg-slate-50 border-slate-200 hover:bg-slate-100/70'
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={Boolean(newStaffPerms[opt.key])}
+                              onChange={(e) =>
+                                setNewStaffPerms((prev) => ({
+                                  ...prev,
+                                  [opt.key]: e.target.checked,
+                                }))
+                              }
+                              className="mt-0.5 rounded border-slate-300 text-[#3749BB] focus:ring-[#3749BB]"
+                            />
+                            <div className="min-w-0">
+                              <p className="text-xs font-semibold text-slate-900">{opt.label}</p>
+                              <p className="text-[11px] text-slate-500 leading-snug">{opt.hint}</p>
+                            </div>
+                          </label>
+                        ))}
+                      </div>
                     </div>
                   </div>
 
@@ -2161,60 +2399,131 @@ export function AdminConsole({ onBackToStore }: AdminConsoleProps) {
                             </div>
                           </div>
 
-                          <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-100">
-                            <div className="flex flex-wrap items-center gap-3">
-                              {STAFF_PERMISSION_OPTIONS.map((opt) => (
-                                <label
-                                  key={opt.key}
-                                  className="inline-flex items-center gap-1.5 text-xs text-slate-700 cursor-pointer select-none"
-                                >
-                                  <input
-                                    type="checkbox"
-                                    checked={currentPerms[opt.key]}
-                                    onChange={(e) => {
-                                      const checked = e.target.checked;
-                                      setStaffPermDrafts((prev) => ({
-                                        ...prev,
-                                        [mgr.staffId]: {
-                                          ...getManagerPerms(mgr),
-                                          [opt.key]: checked,
-                                        },
-                                      }));
-                                    }}
-                                    className="rounded border-slate-300 text-[#3749BB] focus:ring-[#3749BB]"
-                                  />
-                                  <span className="font-medium">{opt.label}</span>
-                                </label>
-                              ))}
+                          <div className="space-y-3 pt-2 border-t border-slate-100">
+                            <div>
+                              <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-1.5">
+                                Storefront & General
+                              </p>
+                              <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                                {STORE_PERMISSION_OPTIONS.map((opt) => (
+                                  <label
+                                    key={opt.key}
+                                    className="inline-flex items-center gap-1.5 text-xs text-slate-700 cursor-pointer select-none"
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={Boolean(currentPerms[opt.key])}
+                                      onChange={(e) => {
+                                        const checked = e.target.checked;
+                                        setStaffPermDrafts((prev) => ({
+                                          ...prev,
+                                          [mgr.staffId]: {
+                                            ...getManagerPerms(mgr),
+                                            [opt.key]: checked,
+                                          },
+                                        }));
+                                      }}
+                                      className="rounded border-slate-300 text-[#3749BB] focus:ring-[#3749BB]"
+                                    />
+                                    <span className="font-medium">{opt.label}</span>
+                                  </label>
+                                ))}
+                              </div>
                             </div>
 
-                            <button
-                              type="button"
-                              disabled={!dirty}
-                              onClick={() => {
-                                const snapshot = getManagerPerms(mgr);
-                                requestPasswordConfirm({
-                                  title: 'Confirm Save Manager Permissions',
-                                  description: `Update permission checkboxes for ${mgr.displayName} (@${mgr.username}).`,
-                                  confirmLabel: 'Save Checkboxes',
-                                  execute: async (pw) => {
-                                    await updateStaffPermissions(mgr.staffId, snapshot, pw);
-                                    setStaffPermDrafts((prev) => {
-                                      const next = { ...prev };
-                                      delete next[mgr.staffId];
-                                      return next;
-                                    });
-                                  },
-                                });
-                              }}
-                              className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
-                                dirty
-                                  ? 'bg-[#3749BB] text-white hover:bg-[#2A3998]'
-                                  : 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                              }`}
-                            >
-                              Save Checkboxes
-                            </button>
+                            <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3 pt-2 border-t border-slate-100">
+                              <div className="space-y-1.5">
+                                <div className="flex items-center gap-2">
+                                  <p className="text-[11px] font-bold uppercase tracking-wide text-[#3749BB]">
+                                    ERP System Tabs & Edit Access
+                                  </p>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setStaffPermDrafts((prev) => {
+                                        const next = { ...getManagerPerms(mgr) };
+                                        for (const opt of ERP_PERMISSION_OPTIONS) {
+                                          next[opt.key] = true;
+                                        }
+                                        return { ...prev, [mgr.staffId]: next };
+                                      })
+                                    }
+                                    className="text-[11px] font-semibold text-[#3749BB] hover:underline cursor-pointer"
+                                  >
+                                    All ERP
+                                  </button>
+                                  <span className="text-slate-300">·</span>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setStaffPermDrafts((prev) => {
+                                        const next = { ...getManagerPerms(mgr) };
+                                        for (const opt of ERP_PERMISSION_OPTIONS) {
+                                          next[opt.key] = false;
+                                        }
+                                        return { ...prev, [mgr.staffId]: next };
+                                      })
+                                    }
+                                    className="text-[11px] font-semibold text-slate-500 hover:underline cursor-pointer"
+                                  >
+                                    Clear ERP
+                                  </button>
+                                </div>
+                                <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                                  {ERP_PERMISSION_OPTIONS.map((opt) => (
+                                    <label
+                                      key={opt.key}
+                                      className="inline-flex items-center gap-1.5 text-xs text-slate-700 cursor-pointer select-none"
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={Boolean(currentPerms[opt.key])}
+                                        onChange={(e) => {
+                                          const checked = e.target.checked;
+                                          setStaffPermDrafts((prev) => ({
+                                            ...prev,
+                                            [mgr.staffId]: {
+                                              ...getManagerPerms(mgr),
+                                              [opt.key]: checked,
+                                            },
+                                          }));
+                                        }}
+                                        className="rounded border-slate-300 text-[#3749BB] focus:ring-[#3749BB]"
+                                      />
+                                      <span className="font-medium">{opt.label}</span>
+                                    </label>
+                                  ))}
+                                </div>
+                              </div>
+
+                              <button
+                                type="button"
+                                disabled={!dirty}
+                                onClick={() => {
+                                  const snapshot = getManagerPerms(mgr);
+                                  requestPasswordConfirm({
+                                    title: 'Confirm Save Manager Permissions',
+                                    description: `Update permission checkboxes for ${mgr.displayName} (@${mgr.username}).`,
+                                    confirmLabel: 'Save Checkboxes',
+                                    execute: async (pw) => {
+                                      await updateStaffPermissions(mgr.staffId, snapshot, pw);
+                                      setStaffPermDrafts((prev) => {
+                                        const next = { ...prev };
+                                        delete next[mgr.staffId];
+                                        return next;
+                                      });
+                                    },
+                                  });
+                                }}
+                                className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors shrink-0 cursor-pointer ${
+                                  dirty
+                                    ? 'bg-[#3749BB] text-white hover:bg-[#2A3998]'
+                                    : 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                                }`}
+                              >
+                                Save Checkboxes
+                              </button>
+                            </div>
                           </div>
                         </div>
                       );
